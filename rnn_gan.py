@@ -41,10 +41,9 @@ import time
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.models.rnn import rnn
 from subprocess import call, Popen
 
-import music_data_utils
+from music_data_utils import MusicDataLoader
 
 
 
@@ -63,13 +62,16 @@ FLAGS = flags.FLAGS
 
 
 def data_type():
-  return tf.float16 if FLAGS.use_fp16 else tf.float32
+  #return tf.float16 if FLAGS.use_fp16 else tf.float32
+  return tf.float32
 
-def linear(inp, output_dim, scope=None, stddev=1.0):
+def linear(inp, output_dim, scope=None, stddev=1.0, reuse_scope=False):
   norm = tf.random_normal_initializer(stddev=stddev)
   const = tf.constant_initializer(0.0)
-  with tf.variable_scope(scope or 'linear'):
-    w = tf.get_variable('w', [input.get_shape()[1], output_dim], initializer=norm)
+  with tf.variable_scope(scope or 'linear') as scope:
+    if reuse_scope:
+      scope.reuse_variables()
+    w = tf.get_variable('w', [inp.get_shape()[1], output_dim], initializer=norm)
     b = tf.get_variable('b', [output_dim], initializer=const)
   return tf.matmul(inp, w) + b
 
@@ -98,18 +100,19 @@ class RNNGAN(object):
 
       inputs = tf.random_uniform(shape=[batch_size, num_steps, numfeatures], minval=0.0, maxval=1.0)
 
-      inputs = tf.relu(linear(inputs, size, scope='input_layer'))
-
       # Make list of tensors. One per step in recurrence.
       # Each tensor is batchsize*numfeatures.
       inputs = [tf.squeeze(input_, [1])
                 for input_ in tf.split(1, num_steps, inputs)]
+      transformed = []
+      for i,inp in enumerate(inputs):
+        transformed.append(tf.nn.relu(linear(inp, size, scope='input_layer', reuse_scope=(i!=0))))
 
-      outputs, state = rnn.rnn(cell, inputs, initial_state=self._initial_state)
+      outputs, state = tf.nn.rnn(cell, transformed, initial_state=self._initial_state)
 
       lengths_freqs_velocities = []
-      for output in outputs:
-        length_freq_velocity = tf.relu(linear(output, 3, scope='output_layer'))
+      for i,output in enumerate(outputs):
+        length_freq_velocity = tf.nn.relu(linear(output, 3, scope='output_layer', reuse_scope=(i!=0)))
         lengths_freqs_velocities.append(length_freq_velocity)
    
     self._final_state = state
@@ -120,9 +123,13 @@ class RNNGAN(object):
     # Here we create two copies of the discriminator network (that share parameters),
     # as you cannot use the same network with different inputs in TensorFlow.
     with tf.variable_scope('D') as scope:
-      discriminator1 = discriminator(lengths_freqs_velocities)
+      discriminator1 = self.discriminator(lengths_freqs_velocities, config, is_training)
       scope.reuse_variables()
-      discriminator2 = discriminator(self._input_data)
+      # Make list of tensors. One per step in recurrence.
+      # Each tensor is batchsize*numfeatures.
+      data_inputs = [tf.squeeze(input_, [1])
+                for input_ in tf.split(1, num_steps, self._input_data)]
+      discriminator2 = self.discriminator(data_inputs, config, is_training)
 
     # Define the loss for discriminator and generator networks (see the original
     # paper for details), and create optimizers for both
@@ -148,20 +155,19 @@ class RNNGAN(object):
         global_step=self.global_step,
         var_list=var_list)
 
-    self._new_lr = tf.placeholder(
-        tf.float32, shape=[], name="new_learning_rate")
+    self._new_lr = tf.placeholder(tf.float32, shape=[], name="new_learning_rate")
     self._lr_update = tf.assign(self._lr, self._new_lr)
 
-  def discriminator(inputs):
-    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=1.0, state_is_tuple=True)
+  def discriminator(self, inputs, config, is_training):
+    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(config.hidden_size, forget_bias=1.0, state_is_tuple=True)
     if is_training and config.keep_prob < 1:
       lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
           lstm_cell, output_keep_prob=config.keep_prob)
     cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers, state_is_tuple=True)
-    self._initial_state = cell.zero_state(batch_size, data_type())
+    self._initial_state = cell.zero_state(config.batch_size, data_type())
     if is_training and config.keep_prob < 1:
       inputs = tf.nn.dropout(inputs, config.keep_prob)
-    outputs, state = rnn.rnn(cell, inputs, initial_state=self._initial_state)
+    outputs, state = tf.nn.rnn(cell, inputs, initial_state=self._initial_state)
     return tf.sigmoid(linear(outputs[-1], 1, 'decision'))
 
   
@@ -261,31 +267,34 @@ class TestConfig(object):
   vocab_size = 10000
 
 
-def run_epoch(session, model, loader, eval_op, verbose=False):
+def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, verbose=False):
   """Runs the model on the given data."""
   epoch_size = ((len(data) // model.batch_size) - 1) // model.num_steps
   start_time = time.time()
   gen_losses, disc_losses = 0.0, 0.0
   iters = 0
   state = session.run(model.initial_state)
-  while (batch = loader.get_batch(model.batch_size, model.num_steps)) is not None:
+  loader.rewind(part=datasetlabel)
+  batch = loader.get_batch(model.batch_size, model.num_steps, part=datasetlabel)
+  while batch is not None:
     #fetches = [model.cost, model.final_state, eval_op]
-    fetches = [model.gen_loss, model.disc_loss, eval_op]
+    fetches = [model.gen_loss, model.disc_loss, eval_op1, eval_op2]
     feed_dict = {}
     feed_dict[model.input_data] = batch
     #for i, (c, h) in enumerate(model.initial_state):
     #  feed_dict[c] = state[i].c
     #  feed_dict[h] = state[i].h
     #cost, state, _ = session.run(fetches, feed_dict)
-    gen_loss, disc_loss, _ = session.run(fetches, feed_dict)
+    gen_loss, disc_loss, _, _ = session.run(fetches, feed_dict)
     gen_losses += gen_loss
     disc_losses += disc_loss
     iters += model.num_steps
 
     if verbose and step % (epoch_size // 10) == 10:
       print("%.3f gen loss: %.3f, disc loss: %.3f speed: %.0f wps" %
-            (step * 1.0 / epoch_size, gen_losses / iters, disc_losses / iters
-             iters * model.batch_size / (time.time() - start_time)))
+            (step * 1.0 / epoch_size, gen_losses/iters, disc_losses/iters,
+             iters * model.batch_size/(time.time() - start_time)))
+    batch = loader.get_batch(model.batch_size, model.num_steps, part=datasetlabel)
 
   return (gen_losses/iters, disc_losses/iters)
 
@@ -307,7 +316,7 @@ def main(_):
   if not FLAGS.datadir:
     raise ValueError("Must set --datadir to midi music dir")
 
-  loader = MusicDataLoader(os.path.join(FLAGS.datadir, 'train'), part='train')
+  loader = MusicDataLoader(FLAGS.datadir)
   numfeatures = loader.get_numfeatures()
 
   config = get_config()
@@ -315,9 +324,6 @@ def main(_):
   eval_config.batch_size = 1
   eval_config.num_steps = 1
 
-  valid_loader = MusicDataLoader(os.path.join(FLAGS.datadir, 'valid'), part='valid')
-  valid_data = valid_loader.get_batch(batchsize=config.batch_size, songlength=config.num_steps)
-  
   train_start_time = time.time()
 
   with tf.Graph().as_default(), tf.Session() as session:
@@ -351,12 +357,10 @@ def main(_):
       lr_decay = config.lr_decay ** max(i - config.max_epoch, 0.0)
       m.assign_lr(session, config.learning_rate * lr_decay)
 
-      train_data = loader.get_batch(batchsize=config.batch_size, songlength=config.num_steps, )
-
       print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
-      train_gen_loss,train_disc_loss = run_epoch(session, m, train_data, m.train_op, verbose=True)
+      train_gen_loss,train_disc_loss = run_epoch(session, m, loader, 'train', m.opt_d, m.opt_g, verbose=True)
       print("Epoch: %d Train Loss: %.3f" % (i + 1, train_loss))
-      valid_gen_loss,valid_disc_loss = run_epoch(session, mvalid, valid_data, tf.no_op())
+      valid_gen_loss,valid_disc_loss = run_epoch(session, mvalid, loader, 'validation', tf.no_op(), tf.no_op())
       print("Epoch: %d Valid Loss: %.3f" % (i + 1, valid_loss))
       
       if current_step % FLAGS.steps_per_checkpoint == 0:
@@ -382,9 +386,7 @@ def main(_):
           exit()
         sys.stdout.flush()
 
-    test_loader = MusicDataLoader(os.path.join(FLAGS.datadir, 'test'), part='test')
-    test_data = test_loader.get_batch(batchsize=config.batch_size, songlength=config.num_steps)
-    test_gen_loss,test_disc_loss = run_epoch(session, mtest, test_data, tf.no_op())
+    test_gen_loss,test_disc_loss = run_epoch(session, mtest, loader, 'test', tf.no_op())
     print("Test loss: %.3f" % test_loss)
 
 

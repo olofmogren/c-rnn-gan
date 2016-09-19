@@ -17,60 +17,106 @@
 # ==============================================================================
 
 
-import urlparse, urllib2, os, midi, math, random
+import urlparse, urllib2, os, midi, math, random, re, string
 import numpy as np
 
 sources                              = {}
 sources['classical']                 = {}
-sources['classical']['misc']         = ['http://www.midiworld.com/classic.htm']
-sources['classical']['alkan']        = ['http://www.classicalmidi.co.uk/alkan.htm'] #'http://www.kunstderfuge.com/alkan.htm']
+#sources['classical']['misc']         = ['http://www.midiworld.com/classic.htm']
+sources['classical']['alkan']        = ['http://www.classicalmidi.co.uk/alkan.htm']
+sources['classical']['adam']         = ['http://www.classicalmidi.co.uk/adam.htm']
+sources['classical']['aguado']       = ['http://www.classicalmidi.co.uk/aguadodion.htm']
+sources['classical']['albenizisaac'] = ['http://www.classicalmidi.co.uk/albeniz.htm']
+sources['classical']['albenizmateo'] = ['http://www.classicalmidi.co.uk/albenizmateo.htm']
+sources['classical']['albinoni']      = ['http://www.classicalmidi.co.uk/albinoni.htm']
+sources['classical']['alford']       = ['http://www.classicalmidi.co.uk/alford.htm']
+sources['classical']['anderson']     = ['http://www.classicalmidi.co.uk/anderson.htm']
+sources['classical']['ansell']       = ['http://www.classicalmidi.co.uk/anselljohn.htm']
+sources['classical']['arensky']      = ['http://www.classicalmidi.co.uk/arensky.htm']
+sources['classical']['arriaga']      = ['http://www.classicalmidi.co.uk/arriag.htm']
 sources['classical']['bach']         = ['http://www.midiworld.com/bach.htm','http://www.classicalmidi.co.uk/bach.htm']
-                                       # ,'http://www.kunstderfuge.com/bach/harpsi.htm','http://www.kunstderfuge.com/bach/wtk2.htm','http://www.kunstderfuge.com/bach/wtk1.htm','http://www.kunstderfuge.com/bach/organ.htm','http://www.kunstderfuge.com/bach/chamber.htm','http://www.kunstderfuge.com/bach/canons.htm','http://www.kunstderfuge.com/bach/chorales.htm','http://www.kunstderfuge.com/bach/variae.htm']
 sources['classical']['bartok']       = ['http://www.midiworld.com/bartok.htm','http://www.classicalmidi.co.uk/bartok.htm']
+sources['classical']['barber']       = ['http://www.classicalmidi.co.uk/barber.htm']
+sources['classical']['barbieri']     = ['http://www.classicalmidi.co.uk/barbie.htm']
+sources['classical']['bax']          = ['http://www.classicalmidi.co.uk/bax.htm']
 sources['classical']['beethoven']    = ['http://www.midiworld.com/beethoven.htm','http://www.classicalmidi.co.uk/beethoven.htm']
-                                       #,'http://www.kunstderfuge.com/beethoven/klavier.htm','http://www.kunstderfuge.com/beethoven/chamber.htm','http://www.kunstderfuge.com/beethoven/variae.htm']
+sources['classical']['bellini']      = ['http://www.classicalmidi.co.uk/bellini.htm']
+sources['classical']['berlin']       = ['http://www.classicalmidi.co.uk/berlin.htm']
+sources['classical']['berlioz']      = ['http://www.classicalmidi.co.uk/berlioz.htm']
+sources['classical']['binge']        = ['http://www.classicalmidi.co.uk/binge.htm']
+sources['classical']['bizet']        = ['http://www.classicalmidi.co.uk/bizet.htm']
+sources['classical']['boccherini']   = ['http://www.classicalmidi.co.uk/bocc.htm']
+sources['classical']['boellman']     = ['http://www.classicalmidi.co.uk/boell.htm']
+sources['classical']['borodin']      = ['http://www.classicalmidi.co.uk/borodin.htm']
+sources['classical']['boyce']        = ['http://www.classicalmidi.co.uk/boyce.htm']
 sources['classical']['brahms']       = ['http://www.midiworld.com/brahms.htm','http://www.classicalmidi.co.uk/brahms.htm']
-                                       #,'http://www.kunstderfuge.com/brahms.htm']
+sources['classical']['breton']       = ['http://www.classicalmidi.co.uk/breton.htm']
+sources['classical']['britten']      = ['http://www.classicalmidi.co.uk/britten.htm']
+sources['classical']['bouwer']       = ['http://www.classicalmidi.co.uk/bouwer.htm']
+sources['classical']['bruch']        = ['http://www.classicalmidi.co.uk/bruch.htm']
+sources['classical']['bruckner']     = ['http://www.classicalmidi.co.uk/bruck.htm']
+sources['classical']['bergmuller']   = ['http://www.classicalmidi.co.uk/bergmuller.htm']
+sources['classical']['busoni']       = ['http://www.classicalmidi.co.uk/busoni.htm']
 sources['classical']['byrd']         = ['http://www.midiworld.com/byrd.htm','http://www.classicalmidi.co.uk/byrd.htm']
-                                       #,'http://www.kunstderfuge.com/byrd.htm']
+sources['classical']['carulli']      = ['http://www.classicalmidi.co.uk/carull.htm']
+sources['classical']['chabrier']     = ['http://www.classicalmidi.co.uk/chabrier.htm']
+sources['classical']['chaminade']    = ['http://www.classicalmidi.co.uk/chaminad.htm']
+sources['classical']['chapi']        = ['http://www.classicalmidi.co.uk/chapie.htm']
+sources['classical']['cherubini']    = ['http://www.classicalmidi.co.uk/cherub.htm']
 sources['classical']['chopin']       = ['http://www.midiworld.com/chopin.htm','http://www.classicalmidi.co.uk/chopin.htm']
-                                       #,'http://www.kunstderfuge.com/chopin.htm']
-sources['classical']['debussy']      = ['http://www.classicalmidi.co.uk/debussy.htm'] #'http://www.kunstderfuge.com/debussy.htm']
+sources['classical']['clementi']     = ['http://www.classicalmidi.co.uk/clemen.htm']
+sources['classical']['coates']       = ['http://www.classicalmidi.co.uk/coates.htm']
+sources['classical']['copland']      = ['http://www.classicalmidi.co.uk/copland.htm']
+sources['classical']['corelli']      = ['http://www.classicalmidi.co.uk/cor.htm']
+sources['classical']['cramer']       = ['http://www.classicalmidi.co.uk/cramer.htm']
+sources['classical']['curzon']       = ['http://www.classicalmidi.co.uk/cuzon.htm']
+sources['classical']['czerny']       = ['http://www.classicalmidi.co.uk/czerny.htm']
+sources['classical']['debussy']      = ['http://www.classicalmidi.co.uk/debussy.htm']
+sources['classical']['delibes']      = ['http://www.classicalmidi.co.uk/del.htm']
+#sources['classical']['dukas']        = ['http://www.classicalmidi.co.uk/dukas.htm']
+sources['classical']['delius']       = ['http://www.classicalmidi.co.uk/delius.htm']
 sources['classical']['haydn']        = ['http://www.midiworld.com/haydn.htm','http://www.classicalmidi.co.uk/haydn.htm']
-                                       #,'http://www.kunstderfuge.com/haydn.htm']
 sources['classical']['handel']       = ['http://www.midiworld.com/handel.htm','http://www.classicalmidi.co.uk/handel.htm']
-                                       #,'http://www.kunstderfuge.com/handel.htm']
 sources['classical']['hummel']       = ['http://www.midiworld.com/hummel.htm','http://www.classicalmidi.co.uk/hummel.htm']
 sources['classical']['liszt']        = ['http://www.midiworld.com/liszt.htm','http://www.classicalmidi.co.uk/liszt.htm']
-                                       #,'http://www.kunstderfuge.com/liszt.htm']
 sources['classical']['mendelssohn']  = ['http://www.midiworld.com/mendelssohn.htm','http://www.classicalmidi.co.uk/mend.htm']
-                                       #,'http://www.kunstderfuge.com/mendelssohn.htm']
 sources['classical']['mozart']       = ['http://www.midiworld.com/mozart.htm','http://www.classicalmidi.co.uk/mozart.htm']
-                                       #,'http://www.kunstderfuge.com/mozart.htm']
 sources['classical']['rachmaninov']  = ['http://www.midiworld.com/rachmaninov.htm','http://www.classicalmidi.co.uk/rach.htm']
-#sources['classical']['raff']         = ['http://www.kunstderfuge.com/raff.htm']
-sources['classical']['ravel']        = ['http://www.classicalmidi.co.uk/ravel1.htm'] #'http://www.kunstderfuge.com/ravel.htm']
-sources['classical']['satie']        = ['http://www.classicalmidi.co.uk/satie.htm'] #'http://www.kunstderfuge.com/satie.htm']
+sources['classical']['ravel']        = ['http://www.classicalmidi.co.uk/ravel1.htm']
+sources['classical']['satie']        = ['http://www.classicalmidi.co.uk/satie.htm']
 sources['classical']['scarlatti']    = ['http://www.midiworld.com/scarlatti.htm','http://www.classicalmidi.co.uk/scarlatt.htm']
-sources['classical']['schubert']     = ['http://www.classicalmidi.co.uk/schubert.htm'] #'http://www.kunstderfuge.com/schubert.htm']
+sources['classical']['schubert']     = ['http://www.classicalmidi.co.uk/schubert.htm']
 sources['classical']['schumann']     = ['http://www.midiworld.com/schumann.htm']
-                                       #,'http://www.kunstderfuge.com/schumann.htm']
 sources['classical']['scriabin']     = ['http://www.midiworld.com/scriabin.htm']
-sources['classical']['shostakovich'] = ['http://www.classicalmidi.co.uk/shost.htm'] #'http://www.midiworld.com/shostakovich.htm']
+sources['classical']['shostakovich'] = ['http://www.classicalmidi.co.uk/shost.htm']
 sources['classical']['tchaikovsky']  = ['http://www.midiworld.com/tchaikovsky.htm','http://www.classicalmidi.co.uk/tch.htm']
-                                       #,'http://www.kunstderfuge.com/tchaikovsky.htm']
-sources['classical']['earlymusic']   = ['http://www.midiworld.com/earlymus.htm']
+#sources['classical']['earlymusic']   = ['http://www.midiworld.com/earlymus.htm']
 
 ignore_patterns                      = ['xoom']
+
+file_list = {}
+file_list['validation'] = ['classical/handel/hwv333-3.mid', \
+                           'classical/mozart/mozk466b.mid', \
+                           'classical/byrd/byrd82.mid']
+file_list['test']       = ['classical/handel/clangour.mid', \
+                           'classical/satie/1749satogv4.mid', \
+                           'classical/mozart/mozeine.mid', \
+                           'classical/byrd/byrd51.mid', \
+                           'classical/scriabin/pr37n3.mid', \
+                           'classical/beethoven/515furelse1.mid']
 
 class MusicDataLoader(object):
 
   def __init__(self, datadir):
     self.datadir = datadir
-    download_midi_data()
-    read_data()
+    self.pointer = {}
+    self.pointer['validation'] = 0
+    self.pointer['test'] = 0
+    self.pointer['train'] = 0
+    self.download_midi_data()
+    self.read_data()
 
-  def download_midi_data():
+  def download_midi_data(self):
     """
     download_midi_data will download a number of midi files, linked from the html
     pages specified in the sources dict, into datadir. There will be one subdir
@@ -86,20 +132,22 @@ class MusicDataLoader(object):
         for url in sources[genre][composer]:
           print url
           response = urllib2.urlopen(url)
-          if 'classicalmidi' in url:
-            headers = response.info()
-            print headers
+          #if 'classicalmidi' in url:
+          #  headers = response.info()
+          #  print headers
           data = response.read()
 
           # make urls absolute:
           urlparsed = urlparse.urlparse(url)
           data = re.sub('href="\/', 'href="http://'+urlparsed.hostname+'/', data, flags= re.IGNORECASE)
           data = re.sub('href="(?!http:)', 'href="http://'+urlparsed.hostname+urlparsed.path[:urlparsed.path.rfind('/')]+'/', data, flags= re.IGNORECASE)
-          if 'classicalmidi' in url:
-            print data
+          #if 'classicalmidi' in url:
+          #  print data
           
           links = re.findall('"(http://[^"]+\.mid)"', data)
-          #print links
+          htmlinks = re.findall('"(http://[^"]+\.htm)"', data)
+          for link in htmlinks:
+            print 'html '+link
           for link in links:
             cont = False
             for p in ignore_patterns:
@@ -110,6 +158,8 @@ class MusicDataLoader(object):
             if cont: continue
             print link
             filename = link.split('/')[-1]
+            valid_chars = "-_.()%s%s" % (string.ascii_letters, string.digits)
+            filename = ''.join(c for c in filename if c in valid_chars)
             print genre+'/'+composer+'/'+filename
             midi_files[genre][composer].append(filename)
             localdir = os.path.join(os.path.join(self.datadir, genre), composer)
@@ -122,15 +172,17 @@ class MusicDataLoader(object):
                 try: os.makedirs(localdir)
                 except: pass
                 data_midi = response_midi.read()
-                if 'DOCTYPE html PUBLIC' not in data_midi:
+                if 'DOCTYPE html PUBLIC' in data_midi:
+                  print 'Seems to have been served an html page instead of a midi file. Continuing with next file.'
+                elif data_midi[0:4] == "RIFF":
+                  print 'Seems to have been served an RIFF file instead of a midi file. Continuing with next file.'
+                else:
                   with open(localpath, 'w') as f:
                     f.write(data_midi)
-                else:
-                  print 'Seems to have been served an html page instead of a midi file. Continuing with next file.'
               except:
                 print 'Failed to fetch {}'.format(link)
 
-  def read_data():
+  def read_data(self):
     """
     read_data takes a datadir with genre subdirs, and composer subsubdirs
     containing midi files, reads them into training data for an rnn-gan model.
@@ -144,7 +196,7 @@ class MusicDataLoader(object):
     self.genres = sorted(sources.keys())
     num_genres = len(self.genres)
     composers = []
-    for genre in genres:
+    for genre in self.genres:
       composers.append(sources[genre].keys())
     composers_nodupes = []
     for composer in composers:
@@ -154,14 +206,21 @@ class MusicDataLoader(object):
     self.composers.sort()
     self.num_composers = len(self.composers)
 
-    self.songs = []
+    self.songs = {}
+    self.songs['validation'] = []
+    self.songs['test'] = []
+    self.songs['train'] = []
 
     for genre in sources:
       for composer in sources[genre]:
         current_path = os.path.join(self.datadir,os.path.join(genre, composer))
+        if not os.path.exists(current_path):
+          print 'Path does not exist: {}'.format(current_path)
+          continue
         files = os.listdir(current_path)
         for i,f in enumerate(files):
-          if i % 100 == 0: print 'Reading files: {}'.format(i)
+          if i % 100 == 99 or i+1 == len(files):
+            print 'Reading files {}/{}: {}'.format(genre, composer, i)
           if os.path.isfile(os.path.join(current_path,f)):
             try:
               midi_pattern = midi.read_midifile(os.path.join(current_path,f))
@@ -260,17 +319,34 @@ class MusicDataLoader(object):
                   begin_time = float(ticks*microseconds_per_tick+start_time_of_current_ticking)
                   #current_note = {'begin-time': begin_time, 'length': 0.0, 'freq': tone_to_freq(event.data[0]), 'velocity': float(event.data[1]), 'channel': event.channel}
                   velocity = float(event.data[1])
-                  current_note = [begin_time, 0.0, tone_to_freq(event.data[0]), velocity, event.channel}
-            self.songs.append([genre, composer, song_data])
+                  current_note = [begin_time, 0.0, tone_to_freq(event.data[0]), velocity, event.channel]
+            if os.path.join(os.path.join(genre, composer), f) in file_list['validation']:
+              self.songs['validation'].append([genre, composer, song_data])
+            elif os.path.join(os.path.join(genre, composer), f) in file_list['test']:
+              self.songs['test'].append([genre, composer, song_data])
+            else:
+              self.songs['train'].append([genre, composer, song_data])
           #break
+    random.shuffle(self.songs['train'])
+    self.pointer['validation'] = 0
+    self.pointer['test'] = 0
+    self.pointer['train'] = 0
     return self.songs
 
-  def get_batch(batchsize, songlength):
+  def rewind(self, part='train'):
+    self.pointer[part] = 0
+
+  def get_batch(self, batchsize, songlength, part='train'):
     """
-      get_batch() returns a random selection from self.songs, as a
+      get_batch() returns a batch from self.songs, as a
       list of tensors of dimensions [batchsize, numfeatures]
       the list is of length songlength.
-      songs are chopped off after songlength.
+      To have the sequence be the primary index is convention in
+      tensorflow's rnn api.
+      Songs are currently chopped off after songlength.
+
+      Since self.songs was shuffled in read_data(), the batch is
+      a random selection without repetition.
 
       songlength is related to internal sample frequency.
       We fix this to be every 50 milliseconds.
@@ -283,11 +359,14 @@ class MusicDataLoader(object):
       of doing this. It's not reasonable to change composer
       or genre in the middle of a song.
     """
-    if self.songs:
-      batch = random.sample(self.songs, batchsize)
+    if self.pointer[part] > len(self.songs[part])-batchsize:
+      return None
+    if self.songs[part]:
+      batch = self.songs[part][self.pointer[part]:self.pointer[part]+batchsize]
+      self.pointer[part] += batchsize
       numfeatures = len(self.genres)+len(self.composers)+len(batch[0][2][0])-2
       # subtract two for start-time and channel, which we don't include.
-      batch_ndarray = np.ndarray(shape=[batchsize, songlength, numfeatures)
+      batch_ndarray = np.ndarray(shape=[batchsize, songlength, numfeatures])
       print 'batch shape: {}'.format(batch_ndarray.shape)
       for b in range(len(batch)):
         for s in range(len(batch[b])):
@@ -312,7 +391,7 @@ class MusicDataLoader(object):
       raise 'get_batch() called but self.songs is not initialized.'
   
   def get_numfeatures(self):
-    return len(self.genres)+len(self.composers)+len(self.songs[0][2][0])-2
+    return len(self.genres)+len(self.composers)+len(self.songs['train'][0][2][0])-2
 
 def tone_to_freq(tone):
   """
@@ -344,3 +423,4 @@ def onehot(i, length):
   a = np.zeros(shape=[length])
   a[i] = 1
   return a
+
