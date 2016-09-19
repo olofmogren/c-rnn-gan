@@ -1,100 +1,346 @@
-import urlparse, urllib2, os
+# Tools to load and save midi files for the rnn-gan-project.
+# 
+# Written by Olof Mogren, http://mogren.one/
+#
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
 
-midi_frequencies = [8.1757989156,8.661957218,9.1770239974,9.7227182413,10.3008611535,10.9133822323,11.5623257097,12.2498573744,12.9782717994,13.75,14.5676175474,15.4338531643,16.3515978313,17.3239144361,18.3540479948,19.4454364826,20.6017223071,21.8267644646,23.1246514195,24.4997147489,25.9565435987,27.5,29.1352350949,30.8677063285,32.7031956626,34.6478288721,36.7080959897,38.8908729653,41.2034446141,43.6535289291,46.249302839,48.9994294977,51.9130871975,55,58.2704701898,61.735412657,65.4063913251,69.2956577442,73.4161919794,77.7817459305,82.4068892282,87.3070578583,92.4986056779,97.9988589954,103.826174395,110,116.5409403795,123.470825314,130.8127826503,138.5913154884,146.8323839587,155.563491861,164.8137784564,174.6141157165,184.9972113558,195.9977179909,207.65234879,220,233.081880759,246.9416506281,261.6255653006,277.1826309769,293.6647679174,311.1269837221,329.6275569129,349.228231433,369.9944227116,391.9954359817,415.3046975799,440,466.1637615181,493.8833012561,523.2511306012,554.3652619537,587.3295358348,622.2539674442,659.2551138257,698.456462866,739.9888454233,783.9908719635,830.6093951599,880,932.3275230362,987.7666025122,1046.5022612024,1108.7305239075,1174.6590716696,1244.5079348883,1318.5102276515,1396.912925732,1479.9776908465,1567.981743927,1661.2187903198,1760,1864.6550460724,1975.5332050245,2093.0045224048,2217.461047815,2349.3181433393,2489.0158697767,2637.020455303,2793.825851464,2959.9553816931,3135.963487854,3322.4375806396,3520,3729.3100921447,3951.066410049,4186.0090448096,4434.92209563,4698.6362866785,4978.0317395533,5274.0409106059,5587.6517029281,5919.9107633862,6271.926975708,6644.8751612791,7040,7458.6201842895,7902.132820098,8372.0180896192,8869.8441912599,9397.2725733571,9956.0634791066,10548.0818212119,11175.3034058561,11839.8215267723,12543.853951416]
+
+import urlparse, urllib2, os, midi, math, random
+import numpy as np
 
 sources                              = {}
 sources['classical']                 = {}
 sources['classical']['misc']         = ['http://www.midiworld.com/classic.htm']
-sources['classical']['alkan']        = ['http://www.kunstderfuge.com/alkan.htm']
-sources['classical']['bach']         = ['http://www.midiworld.com/bach.htm','http://www.kunstderfuge.com/bach/harpsi.htm','http://www.kunstderfuge.com/bach/wtk2.htm','http://www.kunstderfuge.com/bach/wtk1.htm','http://www.kunstderfuge.com/bach/organ.htm','http://www.kunstderfuge.com/bach/chamber.htm','http://www.kunstderfuge.com/bach/canons.htm','http://www.kunstderfuge.com/bach/chorales.htm','http://www.kunstderfuge.com/bach/variae.htm']
-sources['classical']['bartok']       = ['http://www.midiworld.com/bartok.htm']
-sources['classical']['beethoven']    = ['http://www.midiworld.com/beethoven.htm','http://www.kunstderfuge.com/beethoven/klavier.htm','http://www.kunstderfuge.com/beethoven/chamber.htm','http://www.kunstderfuge.com/beethoven/variae.htm']
-sources['classical']['brahms']       = ['http://www.midiworld.com/brahms.htm','http://www.kunstderfuge.com/brahms.htm']
-sources['classical']['byrd']         = ['http://www.midiworld.com/byrd.htm','http://www.kunstderfuge.com/byrd.htm']
-sources['classical']['chopin']       = ['http://www.midiworld.com/chopin.htm','http://www.kunstderfuge.com/chopin.htm']
-sources['classical']['debussy']      = ['http://www.kunstderfuge.com/debussy.htm']
-sources['classical']['haydn']        = ['http://www.midiworld.com/haydn.htm','http://www.kunstderfuge.com/haydn.htm']
-sources['classical']['handel']       = ['http://www.midiworld.com/handel.htm','http://www.kunstderfuge.com/handel.htm']
-sources['classical']['hummel']       = ['http://www.midiworld.com/hummel.htm']
-sources['classical']['liszt']        = ['http://www.midiworld.com/liszt.htm','http://www.kunstderfuge.com/liszt.htm']
-sources['classical']['mendelssohn']  = ['http://www.midiworld.com/mendelssohn.htm','http://www.kunstderfuge.com/mendelssohn.htm']
-sources['classical']['mozart']       = ['http://www.midiworld.com/mozart.htm','http://www.kunstderfuge.com/mozart.htm']
-sources['classical']['rachmaninov']  = ['http://www.midiworld.com/rachmaninov.htm']
-sources['classical']['raff']         = ['http://www.kunstderfuge.com/raff.htm']
-sources['classical']['ravel']        = ['http://www.kunstderfuge.com/ravel.htm']
-sources['classical']['satie']        = ['http://www.kunstderfuge.com/satie.htm']
-sources['classical']['scarlatti']    = ['http://www.midiworld.com/scarlatti.htm']
-sources['classical']['schubert']     = ['http://www.kunstderfuge.com/schubert.htm']
-sources['classical']['schumann']     = ['http://www.midiworld.com/schumann.htm','http://www.kunstderfuge.com/schumann.htm']
+sources['classical']['alkan']        = ['http://www.classicalmidi.co.uk/alkan.htm'] #'http://www.kunstderfuge.com/alkan.htm']
+sources['classical']['bach']         = ['http://www.midiworld.com/bach.htm','http://www.classicalmidi.co.uk/bach.htm']
+                                       # ,'http://www.kunstderfuge.com/bach/harpsi.htm','http://www.kunstderfuge.com/bach/wtk2.htm','http://www.kunstderfuge.com/bach/wtk1.htm','http://www.kunstderfuge.com/bach/organ.htm','http://www.kunstderfuge.com/bach/chamber.htm','http://www.kunstderfuge.com/bach/canons.htm','http://www.kunstderfuge.com/bach/chorales.htm','http://www.kunstderfuge.com/bach/variae.htm']
+sources['classical']['bartok']       = ['http://www.midiworld.com/bartok.htm','http://www.classicalmidi.co.uk/bartok.htm']
+sources['classical']['beethoven']    = ['http://www.midiworld.com/beethoven.htm','http://www.classicalmidi.co.uk/beethoven.htm']
+                                       #,'http://www.kunstderfuge.com/beethoven/klavier.htm','http://www.kunstderfuge.com/beethoven/chamber.htm','http://www.kunstderfuge.com/beethoven/variae.htm']
+sources['classical']['brahms']       = ['http://www.midiworld.com/brahms.htm','http://www.classicalmidi.co.uk/brahms.htm']
+                                       #,'http://www.kunstderfuge.com/brahms.htm']
+sources['classical']['byrd']         = ['http://www.midiworld.com/byrd.htm','http://www.classicalmidi.co.uk/byrd.htm']
+                                       #,'http://www.kunstderfuge.com/byrd.htm']
+sources['classical']['chopin']       = ['http://www.midiworld.com/chopin.htm','http://www.classicalmidi.co.uk/chopin.htm']
+                                       #,'http://www.kunstderfuge.com/chopin.htm']
+sources['classical']['debussy']      = ['http://www.classicalmidi.co.uk/debussy.htm'] #'http://www.kunstderfuge.com/debussy.htm']
+sources['classical']['haydn']        = ['http://www.midiworld.com/haydn.htm','http://www.classicalmidi.co.uk/haydn.htm']
+                                       #,'http://www.kunstderfuge.com/haydn.htm']
+sources['classical']['handel']       = ['http://www.midiworld.com/handel.htm','http://www.classicalmidi.co.uk/handel.htm']
+                                       #,'http://www.kunstderfuge.com/handel.htm']
+sources['classical']['hummel']       = ['http://www.midiworld.com/hummel.htm','http://www.classicalmidi.co.uk/hummel.htm']
+sources['classical']['liszt']        = ['http://www.midiworld.com/liszt.htm','http://www.classicalmidi.co.uk/liszt.htm']
+                                       #,'http://www.kunstderfuge.com/liszt.htm']
+sources['classical']['mendelssohn']  = ['http://www.midiworld.com/mendelssohn.htm','http://www.classicalmidi.co.uk/mend.htm']
+                                       #,'http://www.kunstderfuge.com/mendelssohn.htm']
+sources['classical']['mozart']       = ['http://www.midiworld.com/mozart.htm','http://www.classicalmidi.co.uk/mozart.htm']
+                                       #,'http://www.kunstderfuge.com/mozart.htm']
+sources['classical']['rachmaninov']  = ['http://www.midiworld.com/rachmaninov.htm','http://www.classicalmidi.co.uk/rach.htm']
+#sources['classical']['raff']         = ['http://www.kunstderfuge.com/raff.htm']
+sources['classical']['ravel']        = ['http://www.classicalmidi.co.uk/ravel1.htm'] #'http://www.kunstderfuge.com/ravel.htm']
+sources['classical']['satie']        = ['http://www.classicalmidi.co.uk/satie.htm'] #'http://www.kunstderfuge.com/satie.htm']
+sources['classical']['scarlatti']    = ['http://www.midiworld.com/scarlatti.htm','http://www.classicalmidi.co.uk/scarlatt.htm']
+sources['classical']['schubert']     = ['http://www.classicalmidi.co.uk/schubert.htm'] #'http://www.kunstderfuge.com/schubert.htm']
+sources['classical']['schumann']     = ['http://www.midiworld.com/schumann.htm']
+                                       #,'http://www.kunstderfuge.com/schumann.htm']
 sources['classical']['scriabin']     = ['http://www.midiworld.com/scriabin.htm']
-#sources['classical']['shostakovich'] = ['http://www.midiworld.com/shostakovich.htm']
-sources['classical']['tchaikovsky']  = ['http://www.midiworld.com/tchaikovsky.htm','http://www.kunstderfuge.com/tchaikovsky.htm']
+sources['classical']['shostakovich'] = ['http://www.classicalmidi.co.uk/shost.htm'] #'http://www.midiworld.com/shostakovich.htm']
+sources['classical']['tchaikovsky']  = ['http://www.midiworld.com/tchaikovsky.htm','http://www.classicalmidi.co.uk/tch.htm']
+                                       #,'http://www.kunstderfuge.com/tchaikovsky.htm']
 sources['classical']['earlymusic']   = ['http://www.midiworld.com/earlymus.htm']
 
-def download_midi_data(datadir):
-  """
-  download_midi_data will download a number of midi files, linked from the html
-  pages specified in the sources dict, into datadir. There will be one subdir
-  per genre, and within each genre-subdir, there will be a subdir per composer.
-  Hence, similar to the structure of the sources dict.
-  """
-  midi_files = {}
+ignore_patterns                      = ['xoom']
 
-  for genre in sources:
-    midi_files[genre] = {}
-    for composer in sources[genre]:
-      midi_files[genre][composer] = []
-      for url in sources[genre][composer]:
-        print url
-        response = urllib2.urlopen(url)
-        #if 'kunstder' in url:
-        #  headers = response.info()
-        #  print headers
-        data = response.read()
-        urlparsed = urlparse.urlparse(url)
-        data = re.sub('href="\/', 'href="http://'+urlparsed.hostname+'/', data)
-        data = re.sub('href="(?!http:)', 'href=http://"'+urlparsed.hostname+urlparsed.path[:urlparsed.path.rfind('/')]+'/', data)
-        #if 'kunstder' in url:
-        #  print data
-        links = re.findall('"(http://[^"]+\.mid)"', data)
-        #print links
-        for link in links:
-          print link
-          filename = link.split('/')[-1]
-          print filename
-          midi_files[genre][composer].append(filename)
-          localdir = os.path.join(os.path.join(datadir, genre), composer)
-          localpath = os.path.join(localdir, filename)
-          if os.path.exists(localpath):
-            print 'File exists. Not redownloading: {}'.format(localpath)
-          else:
-            response_midi = urllib2.urlopen(link)
-            try: os.makedirs(localdir)
-            except: pass
-            data_midi = response_midi.read()
-            if 'DOCTYPE html PUBLIC' not in data_midi:
-              with open(localpath, 'w') as f:
-                f.write(data_midi)
+class MusicDataLoader(object):
+
+  def __init__(self, datadir):
+    self.datadir = datadir
+    download_midi_data()
+    read_data()
+
+  def download_midi_data():
+    """
+    download_midi_data will download a number of midi files, linked from the html
+    pages specified in the sources dict, into datadir. There will be one subdir
+    per genre, and within each genre-subdir, there will be a subdir per composer.
+    Hence, similar to the structure of the sources dict.
+    """
+    midi_files = {}
+
+    for genre in sources:
+      midi_files[genre] = {}
+      for composer in sources[genre]:
+        midi_files[genre][composer] = []
+        for url in sources[genre][composer]:
+          print url
+          response = urllib2.urlopen(url)
+          if 'classicalmidi' in url:
+            headers = response.info()
+            print headers
+          data = response.read()
+
+          # make urls absolute:
+          urlparsed = urlparse.urlparse(url)
+          data = re.sub('href="\/', 'href="http://'+urlparsed.hostname+'/', data, flags= re.IGNORECASE)
+          data = re.sub('href="(?!http:)', 'href="http://'+urlparsed.hostname+urlparsed.path[:urlparsed.path.rfind('/')]+'/', data, flags= re.IGNORECASE)
+          if 'classicalmidi' in url:
+            print data
+          
+          links = re.findall('"(http://[^"]+\.mid)"', data)
+          #print links
+          for link in links:
+            cont = False
+            for p in ignore_patterns:
+              if p in link:
+                print 'Not downloading links with {}'.format(p)
+                cont = True
+                continue
+            if cont: continue
+            print link
+            filename = link.split('/')[-1]
+            print genre+'/'+composer+'/'+filename
+            midi_files[genre][composer].append(filename)
+            localdir = os.path.join(os.path.join(self.datadir, genre), composer)
+            localpath = os.path.join(localdir, filename)
+            if os.path.exists(localpath):
+              print 'File exists. Not redownloading: {}'.format(localpath)
             else:
-              print 'Seems to have been served an html page instead of a midi file. Continuing with next file.'
+              try:
+                response_midi = urllib2.urlopen(link)
+                try: os.makedirs(localdir)
+                except: pass
+                data_midi = response_midi.read()
+                if 'DOCTYPE html PUBLIC' not in data_midi:
+                  with open(localpath, 'w') as f:
+                    f.write(data_midi)
+                else:
+                  print 'Seems to have been served an html page instead of a midi file. Continuing with next file.'
+              except:
+                print 'Failed to fetch {}'.format(link)
 
-def read_data(datadir):
-  """
-  read_data takes a datadir with genre subdirs, and composer subsubdirs
-  containing midi files, reads them into training data for a rnn-gan model.
-  Since the model is generative, we'll load the data not in x-y-pairs,
-  but with genre and composer information within the data.
-  Midi music information will be real-valued frequencies of the
-  tones, and intensity taken from the velocity information in
-  the midi files.
-  """
-  genres = sorted(sources.keys())
-  num_genres = len(genres)
-  composers = []
-  for genre in genres:
-    composers.append(genre.keys())
-  composers.sort()
-  num_composers = len(composers)
+  def read_data():
+    """
+    read_data takes a datadir with genre subdirs, and composer subsubdirs
+    containing midi files, reads them into training data for an rnn-gan model.
+    Midi music information will be real-valued frequencies of the
+    tones, and intensity taken from the velocity information in
+    the midi files.
 
-  print 'Not yet implemented...'
-  pass
+    returns a list of tuples, [genre, composer, song_data]
+    Also saves this list in self.songs.
+    """
+    self.genres = sorted(sources.keys())
+    num_genres = len(self.genres)
+    composers = []
+    for genre in genres:
+      composers.append(sources[genre].keys())
+    composers_nodupes = []
+    for composer in composers:
+      if composer not in composers_nodupes:
+        composers_nodupes.append(composer)
+    self.composers = composers_nodupes
+    self.composers.sort()
+    self.num_composers = len(self.composers)
+
+    self.songs = []
+
+    for genre in sources:
+      for composer in sources[genre]:
+        current_path = os.path.join(self.datadir,os.path.join(genre, composer))
+        files = os.listdir(current_path)
+        for i,f in enumerate(files):
+          if i % 100 == 0: print 'Reading files: {}'.format(i)
+          if os.path.isfile(os.path.join(current_path,f)):
+            try:
+              midi_pattern = midi.read_midifile(os.path.join(current_path,f))
+            except:
+              print 'Error reading {}'.format(os.path.join(current_path,f))
+              continue
+            song_data = []
+            tempo_events = []
+            #
+            # Interpreting the midi pattern.
+            # A pattern has a list of tracks
+            # (midi.Track()).
+            # Each track is a list of events:
+            #   * midi.events.SetTempoEvent: tick, data([int, int, int])
+            #     (The three ints are really three bytes representing one integer.)
+            #   * midi.events.TimeSignatureEvent: tick, data([int, int, int, int])
+            #     (ignored)
+            #   * midi.events.KeySignatureEvent: tick, data([int, int])
+            #     (ignored)
+            #   * midi.events.MarkerEvent: tick, text, data
+            #   * midi.events.PortEvent: tick(int), data
+            #   * midi.events.TrackNameEvent: tick(int), text(string), data([ints])
+            #   * midi.events.ProgramChangeEvent: tick, channel, data
+            #   * midi.events.ControlChangeEvent: tick, channel, data
+            #   * midi.events.PitchWheelEvent: tick, data(two bytes, 14 bits)
+            #
+            #   * midi.events.NoteOnEvent:  tick(int), channel(int), data([int,int]))
+            #     - data[0] is the note (0-127)
+            #     - data[1] is the velocity.
+            #     - if velocity is 0, this is equivalent of a midi.NoteOffEvent
+            #   * midi.events.NoteOffEvent: tick(int), channel(int), data([int,int]))
+            #
+            #   * midi.events.EndOfTrackEvent: tick(int), data()
+            #
+            # Ticks are relative.
+            #
+            # Tempo are in microseconds/quarter note.
+            #
+            # This interpretation was done after reading
+            # http://electronicmusic.wikia.com/wiki/Velocity
+            # http://faydoc.tripod.com/formats/mid.htm
+            # http://www.lastrayofhope.co.uk/2009/12/23/midi-delta-time-ticks-to-seconds/2/
+            # and looking at some files. It will hopefully be enough
+            # for the use in this project.
+            #
+            # We'll save the data intermediately with a dict representing each tone.
+            # The dicts we put into a list. Times are microseconds.
+            # Keys: 'freq', 'velocity', 'begin-time', 'length'
+            #
+            # TODO: Figure out pitch.
+            #
+            # Tempo:
+            ticks_per_quarter_note = midi_pattern.resolution
+            for track in midi_pattern:
+              ticks = 0
+              for event in track:
+                ticks += event.tick
+                if type(event) == midi.events.SetTempoEvent:
+                  tempo_events.append({'abs_tick': ticks, 'microseconds_per_quarter_note': event.data[2]+event.data[1]*256+event.data[0]*256*256})
+            tempo_events.sort(key=lambda e: e['abs_tick'])
+            if tempo_events:
+              microseconds_per_quarter_note = tempo_events[0]['microseconds_per_quarter_note']
+            else:
+              microseconds_per_quarter_note = 500000
+            microseconds_per_tick = float(microseconds_per_quarter_note) / float(ticks_per_quarter_note)
+
+            for track in midi_pattern:
+              start_time_of_current_ticking = 0
+              ticks = 0
+              abs_ticks = 0
+              next_tempo_event = 1
+              current_note = None
+              for event in track:
+                if len(tempo_events) > next_tempo_event \
+                   and tempo_events[next_tempo_event]['abs_tick'] < abs_ticks+event.tick:
+                  ticks_in_new_tempo = abs_ticks+event.tick-tempo_events[next_tempo_event]['abs_tick']
+                  start_time_of_current_ticking += microseconds_per_tick*(tempo_events[next_tempo_event]['abs_tick']-abs_ticks)
+
+                  ticks = ticks_in_new_tempo
+                  microseconds_per_tick = float(tempo_events[next_tempo_event]['microseconds_per_quarter_note']) / float(ticks_per_quarter_note)
+                  next_tempo_event += 1
+                else:
+                  ticks += event.tick
+                abs_ticks += event.tick
+                if type(event) == midi.events.SetTempoEvent:
+                  pass # These were already handled in a previous loop
+                elif (type(event) == midi.events.NoteOffEvent) or \
+                     (type(event) == midi.events.NoteOnEvent and \
+                      event.velocity == 0):
+                  if current_note:
+                     #current_note['length'] = float(ticks*microseconds_per_tick)
+                     current_note[1] = float(ticks*microseconds_per_tick)
+                     song_data.append(current_note)
+                     current_note = None
+                elif type(event) == midi.events.NoteOnEvent:
+                  begin_time = float(ticks*microseconds_per_tick+start_time_of_current_ticking)
+                  #current_note = {'begin-time': begin_time, 'length': 0.0, 'freq': tone_to_freq(event.data[0]), 'velocity': float(event.data[1]), 'channel': event.channel}
+                  velocity = float(event.data[1])
+                  current_note = [begin_time, 0.0, tone_to_freq(event.data[0]), velocity, event.channel}
+            self.songs.append([genre, composer, song_data])
+          #break
+    return self.songs
+
+  def get_batch(batchsize, songlength):
+    """
+      get_batch() returns a random selection from self.songs, as a
+      list of tensors of dimensions [batchsize, numfeatures]
+      the list is of length songlength.
+      songs are chopped off after songlength.
+
+      songlength is related to internal sample frequency.
+      We fix this to be every 50 milliseconds.
+      This means 20 samples per second.
+      This might be subject to change, if ticks
+      or parts of notes should be basis for the notion of time.
+
+      composer and genre is concatenated to each event
+      in the sequence. There might be more clever ways
+      of doing this. It's not reasonable to change composer
+      or genre in the middle of a song.
+    """
+    if self.songs:
+      batch = random.sample(self.songs, batchsize)
+      numfeatures = len(self.genres)+len(self.composers)+len(batch[0][2][0])-2
+      # subtract two for start-time and channel, which we don't include.
+      batch_ndarray = np.ndarray(shape=[batchsize, songlength, numfeatures)
+      print 'batch shape: {}'.format(batch_ndarray.shape)
+      for b in range(len(batch)):
+        for s in range(len(batch[b])):
+          songmatrix = np.ndarray(shape=[songlength, numfeatures])
+          zeroframe = np.zeros(shape=[len(batch[0][2][0])-2])
+          composeronehot = onehot(self.composers.index(batch[b][s][1]), len(self.composers))
+          genreonehot = onehot(self.genres.index(batch[b][s][0]), len(self.genres))
+          evendid = 0
+          for n in range(songlength):
+            # TODO: channels!
+            event = zeroframe
+            for e in range(eventid, len(batch[b][s][2])):
+              if batch[b][s][2][e]['begin-time'] < n*50000:
+                # we don't include start-time at index 0:
+                event = np.array(batch[b][s][2][e][1:-1])
+                eventid = e
+            songmatrix[n,:] = np.concatenate([genreonehot, composeronehot, event])
+          batch_ndarray[b,:,:] = songmatrix
+      batched_sequence = np.split(batch_ndarray, indices_or_sections=songlength, axis=1)
+      return [np.squeeze(s, axis=1) for s in batched_sequence]
+    else:
+      raise 'get_batch() called but self.songs is not initialized.'
+  
+  def get_numfeatures(self):
+    return len(self.genres)+len(self.composers)+len(self.songs[0][2][0])-2
+
+def tone_to_freq(tone):
+  """
+    returns the frequency of a tone. 
+
+    formulas from
+      * https://en.wikipedia.org/wiki/MIDI_Tuning_Standard
+      * https://en.wikipedia.org/wiki/Cent_(music)
+  """
+  return math.pow(2, ((float(tone)-69.0)/12.0)) * 440.0
+
+def freq_to_tone(freq):
+  """
+    returns a dict d where
+    d['tone'] is the base tone in midi standard
+    d['cents'] is the cents to make the tone into the exact-ish frequency provided.
+               multiply this with 8192 to get the midi pitch level.
+
+    formulas from
+      * https://en.wikipedia.org/wiki/MIDI_Tuning_Standard
+      * https://en.wikipedia.org/wiki/Cent_(music)
+  """
+  float_tone = (69.0+12*math.log(float(freq)/440.0, 2))
+  int_tone = int(float_tone)
+  cents = 1200*math.log(float(freq)/tone_to_freq(int_tone), 2)
+  return {'tone': int_tone, 'cents': cents}
+
+def onehot(i, length):
+  a = np.zeros(shape=[length])
+  a[i] = 1
+  return a
