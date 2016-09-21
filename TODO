@@ -1,5 +1,13 @@
+TODO:
+* Biscale RNN. Quarter notes.
+* CNN discriminator?
+* Bidirectional generator.
+* CNN generator? How?
+* Similarities/dissimilarities with original image paper?
 
+DONE:
+* Perhaps make cells correspond to a number of ticks, and not arbitrary number of microsecs?
+* (32th) And then, make ticks less frequent. Perhaps max resolution a sixteenth note?
+* Run decision on every output, then pool.
 
-# Perhaps make cells correspond to a number of ticks, and not arbitrary number of microsecs?
-# And then, make ticks less frequent. Perhaps max resolution a sixteenth note?
 
