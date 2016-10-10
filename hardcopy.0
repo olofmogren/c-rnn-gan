@@ -1,0 +1,45 @@
+class RNNGAN(object):
+  """The RNNGAN model."""
+
+  def __init__(self, is_training, config, numfeatures=None):
+    self.batch_size = batch_size = config.batch_size
+    self.songlength = songlength = config.songlength
+    size = config.hidden_size
+    self.global_step            = tf.Variable(0, trainable=False)
+
+    self._input_data = tf.placeholder(tf.float32, [batch_size, songlength, numfeature
+s])
+
+    with tf.variable_scope('G') as scope:
+      lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=1.0, state_is_tuple=
+True)
+      if is_training and config.keep_prob < 1:
+        lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
+            lstm_cell, output_keep_prob=config.keep_prob)
+      cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers, state_is_tu
+ple=True)
+
+      self._initial_state = cell.zero_state(batch_size, data_type())
+
+      inputs = tf.random_uniform(shape=[batch_size, songlength, numfeatures], minval=
+0.0, maxval=1.0)
+
+      # Make list of tensors. One per step in recurrence.
+      # Each tensor is batchsize*numfeatures.
+      inputs = [tf.squeeze(input_, [1])
+                for input_ in tf.split(1, songlength, inputs)]
+      transformed = [tf.nn.relu(linear(inp, size, scope='input_layer', reuse_scope=(i
+!=0))) for i,inp in enumerate(inputs)]
+
+      outputs, state = tf.nn.rnn(cell, transformed, initial_state=self._initial_state
+)
+
+      #lengths_freqs_velocities = []
+      #for i,output in enumerate(outputs):
+      #  length_freq_velocity = tf.nn.relu(linear(output, numfeatures, scope='output_
+layer', reuse_scope=(i!=0)))
+      #  lengths_freqs_velocities.append(length_freq_velocity)
+      lengths_freqs_velocities = [tf.nn.relu(linear(output, numfeatures, scope='outpu
+t_layer', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
+
+                                                                   82,1          21%

@@ -8,6 +8,5 @@ TODO:
 DONE:
 * Perhaps make cells correspond to a number of ticks, and not arbitrary number of microsecs?
 * (32th) And then, make ticks less frequent. Perhaps max resolution a sixteenth note?
-* Run decision on every output, then pool.
-
+* If big difference in loss: let the worst loss be optimized.
 

@@ -37,7 +37,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import time, os, sys
+import time, datetime, os, sys
 
 import numpy as np
 import tensorflow as tf
@@ -82,13 +82,14 @@ def linear(inp, output_dim, scope=None, stddev=1.0, reuse_scope=False):
 class RNNGAN(object):
   """The RNNGAN model."""
 
-  def __init__(self, is_training, config, numfeatures=None):
+  def __init__(self, is_training, config, num_song_features=None, num_meta_features=None):
     self.batch_size = batch_size = config.batch_size
     self.songlength = songlength = config.songlength
     size = config.hidden_size
     self.global_step            = tf.Variable(0, trainable=False)
 
-    self._input_data = tf.placeholder(tf.float32, [batch_size, songlength, numfeatures])
+    self._input_songdata = tf.placeholder(tf.float32, [batch_size, songlength, num_song_features])
+    self._input_metadata = tf.placeholder(tf.float32, [batch_size, num_meta_features])
 
     with tf.variable_scope('G') as scope:
       lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=1.0, state_is_tuple=True)
@@ -99,12 +100,19 @@ class RNNGAN(object):
 
       self._initial_state = cell.zero_state(batch_size, data_type())
 
-      inputs = tf.random_uniform(shape=[batch_size, songlength, numfeatures], minval=0.0, maxval=1.0)
+      metainputs = tf.random_uniform(shape=[batch_size, num_meta_features], minval=0.0, maxval=1.0)
+      meta_g = tf.nn.relu(linear(metainputs, config.meta_layer_size, scope='meta_layer', reuse_scope=False))
+      meta_softmax_w = tf.get_variable("meta_softmax_w", [config.meta_layer_size, num_meta_features])
+      meta_softmax_b = tf.get_variable("meta_softmax_b", [num_meta_features])
+      meta_logits = tf.nn.xw_plus_b(meta_g, meta_softmax_w, meta_softmax_b)
+      meta_probs = tf.nn.softmax(meta_logits)
+
+      rnninputs = tf.random_uniform(shape=[batch_size, songlength, num_song_features], minval=0.0, maxval=1.0)
 
       # Make list of tensors. One per step in recurrence.
       # Each tensor is batchsize*numfeatures.
       inputs = [tf.squeeze(input_, [1])
-                for input_ in tf.split(1, songlength, inputs)]
+                for input_ in tf.split(1, songlength, rnninputs)]
       transformed = [tf.nn.relu(linear(inp, size, scope='input_layer', reuse_scope=(i!=0))) for i,inp in enumerate(inputs)]
 
       outputs, state = tf.nn.rnn(cell, transformed, initial_state=self._initial_state)
@@ -113,8 +121,8 @@ class RNNGAN(object):
       #for i,output in enumerate(outputs):
       #  length_freq_velocity = tf.nn.relu(linear(output, numfeatures, scope='output_layer', reuse_scope=(i!=0)))
       #  lengths_freqs_velocities.append(length_freq_velocity)
-      lengths_freqs_velocities = [tf.nn.relu(linear(output, numfeatures, scope='output_layer', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
-   
+      lengths_freqs_velocities = [tf.nn.relu(linear(output, num_song_features, scope='output_layer', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
+      
     self._final_state = state
 
     # The discriminator tries to tell the difference between samples from the
@@ -125,13 +133,23 @@ class RNNGAN(object):
     with tf.variable_scope('D') as scope:
       # Make list of tensors. One per step in recurrence.
       # Each tensor is batchsize*numfeatures.
-      data_inputs = [tf.squeeze(input_, [1])
-                for input_ in tf.split(1, songlength, self._input_data)]
-      if data_inputs[0].get_shape() != lengths_freqs_velocities[0].get_shape():
-        print('data inputs shape {} != generated data shape {}'.format(data_inputs[0].get_shape(), lengths_freqs_velocities[0].get_shape()))
-      self.discriminator_for_real_data = self.discriminator(data_inputs, config, is_training)
+      print('self._input_songdata shape {}'.format(self._input_songdata.get_shape()))
+      print('generated data shape {}'.format(lengths_freqs_velocities[0].get_shape()))
+      #if self._input_songdata[0].get_shape() != lengths_freqs_velocities[0].get_shape():
+      #  print('self._input_songdata shape {} != lengths_freqs_velocities shape {}'.format(self._input_songdata[0].get_shape(), lengths_freqs_velocities[0].get_shape()))
+      songdata_inputs = [tf.squeeze(input_, [1])
+                for input_ in tf.split(1, songlength, self._input_songdata)]
+      songdata_inputs = [tf.concat(1, [self._input_metadata, songdata_input]) for songdata_input in songdata_inputs]
+      print('metadata inputs shape {}'.format(self._input_metadata.get_shape()))
+      print('generated metadata shape {}'.format(meta_probs.get_shape()))
+      #if self._input_metadata[0].get_shape() != meta_probs[0].get_shape():
+      #  print('metadata inputs shape {} != generated metadata shape {}'.format(self._input_metadata[0].get_shape(), meta_probs[0].get_shape()))
+      self.discriminator_for_real_data = self.discriminator(songdata_inputs, config, is_training)
       scope.reuse_variables()
-      self.discriminator_for_generated_data = self.discriminator(lengths_freqs_velocities, config, is_training)
+      generated_data = [tf.concat(1, [meta_probs, songdata_input]) for songdata_input in lengths_freqs_velocities]
+      if songdata_inputs[0].get_shape() != generated_data[0].get_shape():
+        print('songdata_inputs shape {} != generated data shape {}'.format(songdata_inputs[0].get_shape(), generated_data[0].get_shape()))
+      self.discriminator_for_generated_data = self.discriminator(generated_data, config, is_training)
 
     # Define the loss for discriminator and generator networks (see the original
     # paper for details), and create optimizers for both
@@ -180,8 +198,12 @@ class RNNGAN(object):
     session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
 
   @property
-  def input_data(self):
-    return self._input_data
+  def input_songdata(self):
+    return self._input_songdata
+
+  @property
+  def input_metadata(self):
+    return self._input_metadata
 
   @property
   def targets(self):
@@ -211,52 +233,58 @@ class RNNGAN(object):
 class SmallConfig(object):
   """Small config."""
   init_scale = 0.1
-  learning_rate = 1.0
+  learning_rate = 0.9
   d_lr_factor = 0.5
   max_grad_norm = 5
   num_layers = 2
   songlength = 200
+  meta_layer_size = 300
   hidden_size = 200
   max_epoch = 4
-  max_max_epoch = 13
+  max_max_epoch = 500
   keep_prob = 1.0
   lr_decay = 0.9
   batch_size = 10
   vocab_size = 10000
+  biscale_slow_layer_ticks = 8
 
 
 class MediumConfig(object):
   """Medium config."""
   init_scale = 0.05
-  learning_rate = 1.0
+  learning_rate = 0.9
   d_lr_factor = 0.5
   max_grad_norm = 5
   num_layers = 2
   songlength = 350
+  meta_layer_size = 400
   hidden_size = 650
   max_epoch = 6
-  max_max_epoch = 39
+  max_max_epoch = 500
   keep_prob = 0.5
   lr_decay = 0.9
   batch_size = 20
   vocab_size = 10000
+  biscale_slow_layer_ticks = 8
 
 
 class LargeConfig(object):
   """Large config."""
   init_scale = 0.04
-  learning_rate = 1.0
+  learning_rate = 0.9
   d_lr_factor = 0.5
   max_grad_norm = 10
   num_layers = 2
   songlength = 500
+  meta_layer_size = 600
   hidden_size = 1500
   max_epoch = 14
-  max_max_epoch = 55
+  max_max_epoch = 500
   keep_prob = 0.35
   lr_decay = 0.9
   batch_size = 20
   vocab_size = 10000
+  biscale_slow_layer_ticks = 8
 
 
 class TestConfig(object):
@@ -279,16 +307,38 @@ def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, verbose=
   """Runs the model on the given data."""
   #epoch_size = ((len(data) // model.batch_size) - 1) // model.songlength
   start_time = time.time()
+  g_loss, d_loss = 10.0, 10.0
   g_losses, d_losses = 0.0, 0.0
   iters = 0
   state = session.run(model.initial_state)
   loader.rewind(part=datasetlabel)
-  batch = loader.get_batch(model.batch_size, model.songlength, part=datasetlabel)
-  while batch is not None:
+  [batch_meta, batch_song] = loader.get_batch(model.batch_size, model.songlength, part=datasetlabel)
+  while batch_meta is not None and batch_song is not None:
+    op1 = eval_op1
+    op2 = eval_op2
+    if datasetlabel == 'train':
+      if d_loss == 0.0 and g_loss == 0.0:
+        print('Both G and D train loss are zero. Exiting.')
+        break
+        #saver.save(session, checkpoint_path, global_step=m.global_step)
+        #break
+      elif d_loss == 0.0:
+        print('D train loss is zero. Pausing optimization')
+        op1 = tf.no_op()
+      elif g_loss == 0.0: 
+        print('G train loss is zero. Pausing optimization')
+        op2 = tf.no_op()
+      elif g_loss*.5 > d_loss:
+        print('G train loss is {}, D train loss is {}. Pausing optimization of D'.format(g_loss, d_loss))
+        op1 = tf.no_op()
+      elif d_loss*.5 > g_loss:
+        print('G train loss is {}, D train loss is {}. Pausing optimization of G'.format(g_loss, d_loss))
+        op2 = tf.no_op()
     #fetches = [model.cost, model.final_state, eval_op]
-    fetches = [model.g_loss, model.d_loss, eval_op1, eval_op2]
+    fetches = [model.g_loss, model.d_loss, op1, op2]
     feed_dict = {}
-    feed_dict[model.input_data] = batch
+    feed_dict[model.input_songdata] = batch_song
+    feed_dict[model.input_metadata] = batch_meta
     #for i, (c, h) in enumerate(model.initial_state):
     #  feed_dict[c] = state[i].c
     #  feed_dict[h] = state[i].h
@@ -299,8 +349,8 @@ def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, verbose=
     iters += 1
 
     #if verbose and iters-1 % 100 == 99:
-    print("%d batch loss: G: %.3f, D: %.3f, avg loss: G: %.3f, D: %.3f speed: %.1f songs per sec" %
-            (iters, g_loss, d_loss, g_losses/iters, d_losses/iters,
+    print("%s: %d batch loss: G: %.3f, D: %.3f, avg loss: G: %.3f, D: %.3f speed: %.1f songs per sec" %
+            (datasetlabel, iters, g_loss, d_loss, g_losses/iters, d_losses/iters,
              float(iters * model.batch_size)/(time.time() - start_time)))
     batch = loader.get_batch(model.batch_size, model.songlength, part=datasetlabel)
 
@@ -329,8 +379,10 @@ def main(_):
     raise ValueError("Must set --traindir to dir where I can save model and plots.")
   
   loader = MusicDataLoader(FLAGS.datadir, FLAGS.select_validation_percentage, FLAGS.select_test_percentage)
-  numfeatures = loader.get_numfeatures()
-  print('num features:{}'.format(numfeatures))
+  num_song_features = loader.get_num_song_features()
+  print('num_song_features:{}'.format(num_song_features))
+  num_meta_features = loader.get_num_meta_features()
+  print('num_meta_features:{}'.format(num_meta_features))
 
   config = get_config()
   eval_config = get_config()
@@ -338,13 +390,14 @@ def main(_):
   #eval_config.songlength = 500
 
   train_start_time = time.time()
+  checkpoint_path = os.path.join(FLAGS.traindir, "translate.ckpt")
 
   with tf.Graph().as_default(), tf.Session() as session:
     with tf.variable_scope("model", reuse=None):
-      m = RNNGAN(is_training=True, config=config, numfeatures=numfeatures)
+      m = RNNGAN(is_training=True, config=config, num_song_features=num_song_features, num_meta_features=num_meta_features)
     with tf.variable_scope("model", reuse=True):
-      mvalid = RNNGAN(is_training=False, config=eval_config, numfeatures=numfeatures)
-      mtest = RNNGAN(is_training=False, config=eval_config, numfeatures=numfeatures)
+      mvalid = RNNGAN(is_training=False, config=eval_config, num_song_features=num_song_features, num_meta_features=num_meta_features)
+      mtest = RNNGAN(is_training=False, config=eval_config, num_song_features=num_song_features, num_meta_features=num_meta_features)
 
     saver = tf.train.Saver(tf.all_variables())
     ckpt = tf.train.get_checkpoint_state(FLAGS.traindir)
@@ -367,18 +420,28 @@ def main(_):
       try: os.makedirs(plots_dir)
       except: pass
 
+    train_g_loss,train_d_loss = 1.0,1.0
     for i in range(config.max_max_epoch):
       lr_decay = config.lr_decay ** max(i - config.max_epoch, 0.0)
       m.assign_lr(session, config.learning_rate * lr_decay)
 
+      save = False
+      exit = False
+      
       print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
       train_g_loss,train_d_loss = run_epoch(session, m, loader, 'train', m.opt_d, m.opt_g, verbose=True)
       print("Epoch: %d Train loss: G: %.3f, D: %.3f" % (i + 1, train_g_loss, train_d_loss))
       valid_g_loss,valid_d_loss = run_epoch(session, mvalid, loader, 'validation', tf.no_op(), tf.no_op())
       print("Epoch: %d Valid loss: G: %.3f, D: %.3f" % (i + 1, valid_g_loss, valid_d_loss))
       
+      if train_d_loss == 0.0 and train_g_loss == 0.0:
+        print('Both G and D train loss are zero. Exiting.')
+        save = True
+        exit = True
       if i % FLAGS.epochs_per_checkpoint == 0:
-        checkpoint_path = os.path.join(FLAGS.traindir, "translate.ckpt")
+        save = True
+
+      if save:
         saver.save(session, checkpoint_path, global_step=m.global_step)
         step_time, loss = 0.0, 0.0
         if plots_dir:
@@ -393,11 +456,13 @@ def main(_):
           Popen(['gnuplot','gnuplot-commands.txt'], cwd=plots_dir)
         if FLAGS.exit_after > 0 and time.time() - train_start_time > FLAGS.exit_after*60:
           print("%s: Has been running for %d seconds. Will exit (exiting after %d minutes)."%(datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S'), (int)(time.time() - start_time), FLAGS.exit_after))
-          if FLAGS.call_after is not None:
-            print("%s: Will call \"%s\" before exiting."%(datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S'), FLAGS.call_after))
-            res = call(FLAGS.call_after.split(" "))
-            print ('{}: call returned {}.'.format(datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S'), res))
-          exit()
+          exit = True
+      if exit:
+        if FLAGS.call_after is not None:
+          print("%s: Will call \"%s\" before exiting."%(datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S'), FLAGS.call_after))
+          res = call(FLAGS.call_after.split(" "))
+          print ('{}: call returned {}.'.format(datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S'), res))
+        exit()
       sys.stdout.flush()
 
     test_g_loss,test_d_loss = run_epoch(session, mtest, loader, 'test', tf.no_op(), tf.no_op())
