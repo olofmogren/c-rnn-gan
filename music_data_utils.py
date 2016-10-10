@@ -759,13 +759,10 @@ class MusicDataLoader(object):
     for genre in self.genres:
       composers.extend(sources[genre].keys())
     composers_nodupes = []
-    # DEBUG OVERFIT overfit.
-    first = False
     for composer in composers:
       if composer not in composers_nodupes:
         # DEBUG OVERFIT overfit. two lines.
-        if not first: break
-        else: first = False
+        if len(composers_nodupes): break
         composers_nodupes.append(composer)
     self.composers = composers_nodupes
     self.composers.sort()
@@ -815,6 +812,8 @@ class MusicDataLoader(object):
       if count > 20: break
       for composer in sources[genre]:
         # OVERFIT
+        if composer not in self.composers:
+          continue
         if count > 20: break
         current_path = os.path.join(self.datadir,os.path.join(genre, composer))
         if not os.path.exists(current_path):
@@ -936,8 +935,11 @@ class MusicDataLoader(object):
 
   def save_data(self, filename, song_data):
     """
-    save_data takes a filename and a song in internal representation (list of tuples,
-    [genre, composer, song_data]). As returned by read_data().
+    save_data takes a filename and a song in internal representation 
+    (a tensor of dimensions [songlength, 3]).
+    the three values are length, frequency, velocity.
+    if velocity of a frame is zero, no midi event will be
+    triggered at that frame.
 
     Time steps will be fractions of beat notes (32th notes).
     """
@@ -998,32 +1000,45 @@ class MusicDataLoader(object):
     # Multiply with output_ticks_pr_input_tick for output ticks.
     midi_pattern = midi.Pattern([])
     cur_track = midi.Track([])
-    cur_channel = None
-    last_tick = 0
-    for event in song_data:
-      channel = event[4]
-      if cur_channel && cur_channel != channel:
-        midi_pattern.append(cur_track)
-        cur_track = midi.Track()
-        cur_channel = channel
-      elif cur_channel is None:
-        cur_channel = channel
-      begin_tick = event[0]
-      relative_begin_tick = begin_tick-last_tick
-      tick_len = event[1]
-      last_tick += begin_tick+tick_len
-      freq = event[2]
+    #cur_channel = None
+    future_events = {}
+    last_event_tick = 0
+    for tick,frame in enumerate(song_data):
+      if tick in future_events:
+        for event in future_events[tick]:
+          event.tick = tick-last_event_tick
+          cur_track.append(event)
+          last_event_tick = tick
+      # NOT IMPLEMENTED:
+      #channel = frame[4]
+      #if cur_channel && cur_channel != channel:
+      #  midi_pattern.append(cur_track)
+      #  cur_track = midi.Track()
+      #  cur_channel = channel
+      #elif cur_channel is None:
+      #  cur_channel = channel
+      tick_len = frame[0]
+      end_tick += tick+tick_len
+      freq = frame[1]
       d = freq_to_tone(freq)
       tone = d['tone']
-      centes = d['cents'] # currently ignored (auto-tune)
-      velocity = event[3]
-      cur_track.append(midi.events.NoteOnEvent(tick=relative_begin_tick,
+      cents = d['cents'] # currently ignored (auto-tune)
+      tone = min(max(0, tone), 127) # range-check
+      velocity = int(frame[2])
+      cur_track.append(midi.events.NoteOnEvent(tick=tick-last_event_tick,
                                                velocity=velocity,
                                                pitch=tone))
-      cur_track.append(midi.events.NoteOffEvent(tick=tick_len,
-                                                velocity=0
+      last_event_tick = tick
+
+      if end_tick not in future_events:
+        future_events[end_tick] = []
+      future_events[end_tick].append(midi.events.NoteOffEvent(tick=0,
+                                                velocity=0,
                                                 pitch=tone))
+    cur_track.append(midi.EndOfTrackEvent(tick=32))
     midi_pattern.append(cur_track)
+    print 'Printing midi track.'
+    print midi_pattern
     midi.write_midifile(filename, midi_pattern)
 
   def rewind(self, part='train'):
@@ -1032,17 +1047,18 @@ class MusicDataLoader(object):
   def get_batch(self, batchsize, songlength, part='train'):
     """
       get_batch() returns a batch from self.songs, as a
-      pair of lists of tensors (list1, list2).
-      Both are of length songlength.
-      The first list is a list of genres and composers
-        (as pairs of one-hot vectors).
-      The second list contains song data.
-        Song data has dimensions [batchsize, num_song_features]
+      pair of tensors (genrecomposer, song_data).
+      
+      The first tensor is a tensor of genres and composers
+        (as two one-hot vectors that are concatenated).
+      The second tensor contains song data.
+        Song data has dimensions [batchsize, songlength, num_song_features]
 
-      the list is of length songlength.
       To have the sequence be the primary index is convention in
       tensorflow's rnn api.
+      The tensors will have to be split later.
       Songs are currently chopped off after songlength.
+      TODO: handle this in a better way.
 
       Since self.songs was shuffled in read_data(), the batch is
       a random selection without repetition.

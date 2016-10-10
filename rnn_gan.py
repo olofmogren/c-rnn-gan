@@ -82,7 +82,7 @@ def linear(inp, output_dim, scope=None, stddev=1.0, reuse_scope=False):
 class RNNGAN(object):
   """The RNNGAN model."""
 
-  def __init__(self, is_training, config, num_song_features=None, num_meta_features=None):
+  def __init__(self, is_training, config, num_song_features=None, num_meta_features=None, generate_only=False):
     self.batch_size = batch_size = config.batch_size
     self.songlength = songlength = config.songlength
     size = config.hidden_size
@@ -122,9 +122,12 @@ class RNNGAN(object):
       #  length_freq_velocity = tf.nn.relu(linear(output, numfeatures, scope='output_layer', reuse_scope=(i!=0)))
       #  lengths_freqs_velocities.append(length_freq_velocity)
       lengths_freqs_velocities = [tf.nn.relu(linear(output, num_song_features, scope='output_layer', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
-      
+
     self._final_state = state
 
+    if generate_only:
+      return
+      
     # The discriminator tries to tell the difference between samples from the
     # true data distribution (self.x) and the generated samples (self.z).
     #
@@ -359,6 +362,19 @@ def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, verbose=
 
   return (g_losses/iters, d_losses/iters)
 
+
+def sample(session, model):
+  """Samples from the generative model."""
+  #epoch_size = ((len(data) // model.batch_size) - 1) // model.songlength
+  start_time = time.time()
+  state = session.run(model.initial_state)
+  fetches = [model.lengths_freqs_velocities]
+  feed_dict = {}
+  lengths_freqs_velocities = session.run(fetches, feed_dict)
+  # squeeze batch dim:
+  lengths_freqs_velocities = [numpy.squeeze(x, axis=0) for x in lengths_freqs_velocities]
+  return lengths_freqs_velocities
+
 def get_config():
   if FLAGS.model == "small":
     return SmallConfig()
@@ -396,8 +412,9 @@ def main(_):
     with tf.variable_scope("model", reuse=None):
       m = RNNGAN(is_training=True, config=config, num_song_features=num_song_features, num_meta_features=num_meta_features)
     with tf.variable_scope("model", reuse=True):
-      mvalid = RNNGAN(is_training=False, config=eval_config, num_song_features=num_song_features, num_meta_features=num_meta_features)
-      mtest = RNNGAN(is_training=False, config=eval_config, num_song_features=num_song_features, num_meta_features=num_meta_features)
+      mvalid  = RNNGAN(is_training=False, config=eval_config, num_song_features=num_song_features, num_meta_features=num_meta_features)
+      mtest   = RNNGAN(is_training=False, config=eval_config, num_song_features=num_song_features, num_meta_features=num_meta_features)
+      msample = RNNGAN(is_training=False, config=eval_config, num_song_features=num_song_features, num_meta_features=num_meta_features, generate_only=True)
 
     saver = tf.train.Saver(tf.all_variables())
     ckpt = tf.train.get_checkpoint_state(FLAGS.traindir)
@@ -468,8 +485,13 @@ def main(_):
     test_g_loss,test_d_loss = run_epoch(session, mtest, loader, 'test', tf.no_op(), tf.no_op())
     print("Test loss G: %.3f, D: %.3f" %(test_g_loss, test_d_loss))
 
-    song_data = sample(session, mtest)
+    song_data = sample(session, msample)
+    filename = os.path.join(plots_dir, 'out{}.mid'.format(datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')))
+    loader.save_data(filename, song_data)
+    print('Saved {}.'.format(filename))
+
 
 
 if __name__ == "__main__":
   tf.app.run()
+
