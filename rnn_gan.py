@@ -468,6 +468,8 @@ def main(_):
     test_g_loss,test_d_loss = run_epoch(session, mtest, loader, 'test', tf.no_op(), tf.no_op())
     print("Test loss G: %.3f, D: %.3f" %(test_g_loss, test_d_loss))
 
+    song_data = sample(session, mtest)
+
 
 if __name__ == "__main__":
   tf.app.run()
