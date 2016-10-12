@@ -1,12 +1,14 @@
 TODO:
-* Biscale RNN. Quarter notes.
+* Biscale RNN. Quarter notes. Complete bars?
 * CNN discriminator?
 * Bidirectional generator.
 * CNN generator? How?
 * Similarities/dissimilarities with original image paper?
+* Normalize output from G?
 
 DONE:
 * Perhaps make cells correspond to a number of ticks, and not arbitrary number of microsecs?
 * (32th) And then, make ticks less frequent. Perhaps max resolution a sixteenth note?
-* If big difference in loss: let the worst loss be optimized.
+* If big difference in loss: let the worst loss be optimized. Literature calls this freezing. I invented it before looking it up.
+* Pretrain as normal RNN?
 
