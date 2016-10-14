@@ -68,6 +68,8 @@ flags.DEFINE_float("learning_rate", None,
                      "Initial learning rate.")
 flags.DEFINE_boolean("sample", False,
                      "Sample output from the model. Assume training was already done. Save sample output to file.")
+flags.DEFINE_boolean("variable_ticks", False,
+                     "Instead of constant tick length, use variable tick lengths. This means only one note at a time, and zero-velocity tones are put in as breaks.")
 FLAGS = flags.FLAGS
 
 
@@ -92,7 +94,7 @@ class RNNGAN(object):
     self.batch_size = batch_size = config.batch_size
     self.songlength = songlength = config.songlength
     size = config.hidden_size
-    self.global_step            = tf.Variable(0, trainable=False)
+    #self.global_step            = tf.Variable(0, trainable=False)
 
     with tf.variable_scope('G') as scope:
       lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=1.0, state_is_tuple=True)
@@ -130,10 +132,24 @@ class RNNGAN(object):
     self._lr = tf.Variable(config.learning_rate, trainable=False)
     self.g_params = [v for v in tf.trainable_variables() if v.name.startswith('model/G/')]
     g_optimizer = tf.train.GradientDescentOptimizer(self._lr)
-    
-    #if rnn_pretraining:
-    self.rnn_pretraining_loss = tf.reduce_sum(tf.squared_difference(x=tf.pack(tf.transpose(self._lengths_freqs_velocities, perm=[1, 0, 2])), 
-                                                                 y=self._input_songdata) ) #, reduction_indices=[1])
+   
+    inputs_attribute_splitted = tf.split(2,3,self._input_songdata)
+    inputs_lengts = inputs_attribute_splitted[0]
+    inputs_freqs = inputs_attribute_splitted[1]
+    inputs_velocities = inputs_attribute_splitted[2]
+
+    generated_attribute_splitted = tf.split(2,3,self._lengths_freqs_velocities)
+    generated_lengts = generated_attribute_splitted[0]
+    generated_freqs = generated_attribute_splitted[1]
+    generated_velocities = generated_attribute_splitted[2]
+
+    self.rnn_pretraining_loss_lengths = tf.reduce_mean(tf.squared_difference(x=tf.pack(tf.transpose(generated_lengts, perm=[1, 0, 2])), 
+                                                                 y=inputs_lengts) ) #, reduction_indices=[1])
+    self.rnn_pretraining_loss_freqs = tf.reduce_mean(tf.squared_difference(x=tf.pack(tf.transpose(generated_freqs, perm=[1, 0, 2])), 
+                                                                 y=inputs_freqs) ) #, reduction_indices=[1])
+    self.rnn_pretraining_loss_velocities = tf.reduce_mean(tf.squared_difference(x=tf.pack(tf.transpose(generated_velocities, perm=[1, 0, 2])), 
+                                                                 y=inputs_velocities) ) #, reduction_indices=[1])
+    self.rnn_pretraining_loss = 2*self.rnn_pretraining_loss_lengths+self.rnn_pretraining_loss_freqs+self.rnn_pretraining_loss_velocities
     pretraining_grads, _ = tf.clip_by_global_norm(tf.gradients(self.rnn_pretraining_loss, self.g_params), config.max_grad_norm)
     self.opt_pretraining = g_optimizer.apply_gradients(zip(pretraining_grads, self.g_params))
 
@@ -251,10 +267,10 @@ class SmallConfig(object):
   max_epoch = 40
   max_max_epoch = 500
   keep_prob = 1.0
-  lr_decay = 0.9
+  lr_decay = 1.0
   batch_size = 10
   biscale_slow_layer_ticks = 8
-  pretraining_epochs = 40
+  pretraining_epochs = 20
 
 
 class MediumConfig(object):
@@ -270,7 +286,7 @@ class MediumConfig(object):
   max_epoch = 60
   max_max_epoch = 500
   keep_prob = 0.5
-  lr_decay = 0.99
+  lr_decay = 1.0
   batch_size = 20
   biscale_slow_layer_ticks = 8
   pretraining_epochs = 40
@@ -289,7 +305,7 @@ class LargeConfig(object):
   max_epoch = 140
   max_max_epoch = 500
   keep_prob = 0.35
-  lr_decay = 0.99
+  lr_decay = 1.0
   batch_size = 20
   biscale_slow_layer_ticks = 8
   pretraining_epochs = 40
@@ -306,13 +322,13 @@ class TestConfig(object):
   max_epoch = 1
   max_max_epoch = 1
   keep_prob = 1.0
-  lr_decay = 0.99
+  lr_decay = 1.0
   batch_size = 20
   biscale_slow_layer_ticks = 8
   pretraining_epochs = 0
 
 
-def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, pretraining=False, verbose=False):
+def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, pretraining=False, variable_ticks=False, verbose=False):
   """Runs the model on the given data."""
   #epoch_size = ((len(data) // model.batch_size) - 1) // model.songlength
   epoch_start_time = time.time()
@@ -321,7 +337,7 @@ def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, pretrain
   iters = 0
   #state = session.run(model.initial_state)
   loader.rewind(part=datasetlabel)
-  [batch_meta, batch_song] = loader.get_batch(model.batch_size, model.songlength, part=datasetlabel)
+  [batch_meta, batch_song] = loader.get_batch(model.batch_size, model.songlength, part=datasetlabel, variable_ticks=variable_ticks)
   while batch_meta is not None and batch_song is not None:
     op1 = eval_op1
     op2 = eval_op2
@@ -430,6 +446,12 @@ def main(_):
     try: os.makedirs(plots_dir)
     except: pass
   
+  if os.path.exists(os.path.join(FLAGS.traindir, 'global_step.pkl')):
+    with open(os.path.join(FLAGS.traindir, 'global_step.pkl'), 'r') as f:
+      global_step = pkl.load(f)
+  else:
+    global_step = 0
+
   songfeatures_filename = os.path.join(FLAGS.traindir, 'num_song_features.pkl')
   metafeatures_filename = os.path.join(FLAGS.traindir, 'num_meta_features.pkl')
   if FLAGS.sample and os.path.exists(songfeatures_filename) and os.path.exists(metafeatures_filename):
@@ -464,8 +486,6 @@ def main(_):
   with tf.Graph().as_default(), tf.Session() as session:
     with tf.variable_scope("model", reuse=None):
       m = RNNGAN(is_training=True, config=config, num_song_features=num_song_features, num_meta_features=num_meta_features)
-    #with tf.variable_scope("model", reuse=True):
-    #  mtest     = RNNGAN(is_training=False, config=eval_config, num_song_features=num_song_features, num_meta_features=num_meta_features)
 
     saver = tf.train.Saver(tf.all_variables())
     ckpt = tf.train.get_checkpoint_state(FLAGS.traindir)
@@ -478,7 +498,7 @@ def main(_):
 
     if not FLAGS.sample:
       train_g_loss,train_d_loss = 1.0,1.0
-      for i in range(config.max_max_epoch):
+      for i in range(global_step, config.max_max_epoch):
         lr_decay = config.lr_decay ** max(i - config.max_epoch, 0.0)
         m.assign_lr(session, config.learning_rate * lr_decay)
 
@@ -487,13 +507,19 @@ def main(_):
 
         print("Epoch: {} Learning rate: {:.3f}, pretraining: {}".format(i + 1, session.run(m.lr), (i<config.pretraining_epochs)))
         if i<config.pretraining_epochs:
-          train_g_loss,train_d_loss = run_epoch(session, m, loader, 'train', m.opt_pretraining, tf.no_op(), pretraining = True, verbose=True)
+          train_g_loss,train_d_loss = run_epoch(session, m, loader, 'train', m.opt_pretraining, tf.no_op(), pretraining = True, variable_ticks=FLAGS.variable_ticks, verbose=True)
           print("Epoch: {} Pretraining loss: G: {:.3f}".format(i + 1, train_g_loss))
         else:
-          train_g_loss,train_d_loss = run_epoch(session, m, loader, 'train', m.opt_d, m.opt_g, verbose=True)
-          print("Epoch: {} Train loss: G: {:.3f}, D: {:.3f}".format(i + 1, train_g_loss, train_d_loss))
-          valid_g_loss,valid_d_loss = run_epoch(session, m, loader, 'validation', tf.no_op(), tf.no_op())
-          print("Epoch: {} Valid loss: G: {:.3f}, D: {:.3f}".format(i + 1, valid_g_loss, valid_d_loss))
+          train_g_loss,train_d_loss = run_epoch(session, m, loader, 'train', m.opt_d, m.opt_g, variable_ticks=FLAGS.variable_ticks, verbose=True)
+          try:
+            print("Epoch: {} Train loss: G: {:.3f}, D: {:.3f}".format(i + 1, train_g_loss, train_d_loss))
+          except:
+            print("Epoch: {} Train loss: G: {}, D: {}".format(i + 1, train_g_loss, train_d_loss))
+          valid_g_loss,valid_d_loss = run_epoch(session, m, loader, 'validation', tf.no_op(), tf.no_op(), variable_ticks=FLAGS.variable_ticks)
+          try:
+            print("Epoch: {} Valid loss: G: {:.3f}, D: {:.3f}".format(i + 1, valid_g_loss, valid_d_loss))
+          except:
+            print("Epoch: {} Valid loss: G: {}, D: {}".format(i + 1, valid_g_loss, valid_d_loss))
         
         if train_d_loss == 0.0 and train_g_loss == 0.0:
           print('Both G and D train loss are zero. Exiting.')
@@ -503,8 +529,8 @@ def main(_):
           save = True
 
         if save:
-          saver.save(session, checkpoint_path, global_step=m.global_step)
-          print('{}: Saving done!'.format(m.global_step.eval()))
+          saver.save(session, checkpoint_path, global_step=i)
+          print('{}: Saving done!'.format(i))
           step_time, loss = 0.0, 0.0
           if train_d_loss is None: #pretraining
             train_d_loss = 0.0
@@ -515,21 +541,26 @@ def main(_):
               with open(os.path.join(plots_dir, 'gnuplot-input.txt'), 'w') as f:
                 f.write('# global-step learning-rate train-g-loss train-d-loss valid-g-loss valid-d-loss\n')
             with open(os.path.join(plots_dir, 'gnuplot-input.txt'), 'a') as f:
-              f.write('%d %.4f %.2f %.2f %.3f %.3f\n'%(m.global_step.eval(), m.lr.eval(), train_g_loss, train_d_loss, valid_g_loss, valid_d_loss))
+              try:
+                f.write('{} {:.4f} {:.2f} {:.2f} {:.3} {:.3f}\n'.format(i, m.lr.eval(), train_g_loss, train_d_loss, valid_g_loss, valid_d_loss))
+              except:
+                f.write('{} {} {} {} {} {}\n'.format(i, m.lr.eval(), train_g_loss, train_d_loss, valid_g_loss, valid_d_loss))
             if not os.path.exists(os.path.join(plots_dir, 'gnuplot-commands.txt')):
               with open(os.path.join(plots_dir, 'gnuplot-commands.txt'), 'a') as f:
                 f.write('set terminal postscript eps color butt "Times" 14\nset yrange [0:400]\nset output "loss.eps"\nplot \'gnuplot-input.txt\' using ($1):($3) title \'train G\' with linespoints, \'gnuplot-input.txt\' using ($1):($4) title \'train D\' with linespoints, \'gnuplot-input.txt\' using ($1):($5) title \'valid G\' with linespoints, \'gnuplot-input.txt\' using ($1):($6) title \'valid D\' with linespoints, \n')
             Popen(['gnuplot','gnuplot-commands.txt'], cwd=plots_dir)
             
             song_data = sample(session, m)
-            filename = os.path.join(plots_dir, 'out-{}-{}.mid'.format(m.global_step.eval(), datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')))
-            music_data_utils.save_data(filename, song_data)
+            filename = os.path.join(plots_dir, 'out-{}-{}.mid'.format(i, datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')))
+            music_data_utils.save_data(filename, song_data, variable_ticks=FLAGS.variable_ticks)
             print('Saved {}.'.format(filename))
           
           if FLAGS.exit_after > 0 and time.time() - train_start_time > FLAGS.exit_after*60:
             print("%s: Has been running for %d seconds. Will exit (exiting after %d minutes)."%(datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S'), (int)(time.time() - train_start_time), FLAGS.exit_after))
             exit = True
         if exit:
+          with open(os.path.join(FLAGS.traindir, 'global_step.pkl'), 'w') as f:
+            pkl.dump(i+1, f)
           if FLAGS.call_after is not None:
             print("%s: Will call \"%s\" before exiting."%(datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S'), FLAGS.call_after))
             res = call(FLAGS.call_after.split(" "))
@@ -537,12 +568,14 @@ def main(_):
           exit()
         sys.stdout.flush()
 
-      test_g_loss,test_d_loss = run_epoch(session, m, loader, 'test', tf.no_op(), tf.no_op())
+      test_g_loss,test_d_loss = run_epoch(session, m, loader, 'test', tf.no_op(), tf.no_op(), variable_ticks=FLAGS.variable_ticks)
       print("Test loss G: %.3f, D: %.3f" %(test_g_loss, test_d_loss))
+      with open(os.path.join(FLAGS.traindir, 'global_step.pkl'), 'w') as f:
+        pkl.dump(i+1, f)
 
     song_data = sample(session, m)
-    filename = os.path.join(plots_dir, 'out-{}-{}.mid'.format(m.global_step.eval(), datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')))
-    music_data_utils.save_data(filename, song_data)
+    filename = os.path.join(plots_dir, 'out-{}-{}.mid'.format(i, datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')))
+    music_data_utils.save_data(filename, song_data, variable_ticks=FLAGS.variable_ticks)
     print('Saved {}.'.format(filename))
 
 

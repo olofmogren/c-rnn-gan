@@ -939,7 +939,7 @@ class MusicDataLoader(object):
   def rewind(self, part='train'):
     self.pointer[part] = 0
 
-  def get_batch(self, batchsize, songlength, part='train'):
+  def get_batch(self, batchsize, songlength, part='train', variable_ticks=False):
     """
       get_batch() returns a batch from self.songs, as a
       pair of tensors (genrecomposer, song_data).
@@ -967,6 +967,13 @@ class MusicDataLoader(object):
       in the sequence. There might be more clever ways
       of doing this. It's not reasonable to change composer
       or genre in the middle of a song.
+      
+      if variable_ticks is true, we do not fill every tick with an entry in the
+      returned list. Instead, we assume relative ticks, and if a tone
+      comes after another, it comes exactly when the previous one ends.
+      Then, we put zero intensity tones where nothing should be played.
+      Is there a way to do this for multi-tracks?
+
     """
     #print('get_batch(): pointer: {}, len: {}, batchsize: {}'.format(self.pointer[part], len(self.songs[part]), batchsize))
     if self.pointer[part] > len(self.songs[part])-batchsize:
@@ -980,30 +987,50 @@ class MusicDataLoader(object):
       batch_genrecomposer = np.ndarray(shape=[batchsize, num_meta_features])
       batch_songs = np.ndarray(shape=[batchsize, songlength, num_song_features])
       #print 'batch shape: {}'.format(batch_songs.shape)
+      zeroframe = np.zeros(shape=[num_song_features])
       for s in range(len(batch)):
         songmatrix = np.ndarray(shape=[songlength, num_song_features])
-        zeroframe = np.zeros(shape=[len(batch[0][2][0])-2])
         composeronehot = onehot(self.composers.index(batch[s][1]), len(self.composers))
         genreonehot = onehot(self.genres.index(batch[s][0]), len(self.genres))
         genrecomposer = np.concatenate([genreonehot, composeronehot])
-        eventid = 0
-        for n in range(songlength):
-          # TODO: channels!
-          event = zeroframe
-          for e in range(eventid, len(batch[s][2])):
-            #if batch[s][2][e]['begin-time'] < n*50000:
+        if variable_ticks:
+          last_input_tick = 0
+          songmatrixlist = []
+          for n in range(songlength):
+            # TODO: channels!
             # If people are using the higher resolution of the
             # original midi file, we will get the rounding errors
             # right here. But it will be rounded to 'real' 32th notes.
-            if int(batch[s][2][e][0]) == n:
+            if int(batch[s][2][n][0]) > last_input_tick:
+              length = batch[s][2][n][0]-last_input_tick
+              zeroframe[0] = length
+              songmatrixlist.append(zeroframe)
               # we don't include start-time at index 0:
               # and not channel at -1.
-              event = np.array(batch[s][2][e][1:-1])
-              eventid = e
-            elif int(batch[s][2][e][0]) > n:
-              # song data lists should have been sorted above.
-              break
-          songmatrix[n,:] = event
+            songmatrixlist.append(np.array(batch[s][2][n][1:-1]))
+            last_input_tick = batch[s][2][n][0]+batch[s][2][n][1]
+            if n == 0 and self.pointer[part] == 0:
+              print('get_batch() songmatrixlist: {}'.format(songmatrixlist))
+            songmatrix = np.array(songmatrixlist[0:songlength])
+        else:
+          eventid = 0
+          for n in range(songlength):
+            # TODO: channels!
+            event = zeroframe
+            for e in range(eventid, len(batch[s][2])):
+              #if batch[s][2][e]['begin-time'] < n*50000:
+              # If people are using the higher resolution of the
+              # original midi file, we will get the rounding errors
+              # right here. But it will be rounded to 'real' 32th notes.
+              if int(batch[s][2][e][0]) == n:
+                # we don't include start-time at index 0:
+                # and not channel at -1.
+                event = np.array(batch[s][2][e][1:-1])
+                eventid = e
+              elif int(batch[s][2][e][0]) > n:
+                # song data lists should have been sorted above.
+                break
+            songmatrix[n,:] = event
         batch_genrecomposer[s,:] = genrecomposer
         batch_songs[s,:,:] = songmatrix
       #batched_sequence = np.split(batch_songs, indices_or_sections=songlength, axis=1)
@@ -1017,7 +1044,7 @@ class MusicDataLoader(object):
   def get_num_meta_features(self):
     return len(self.genres)+len(self.composers)
 
-def save_data(filename, song_data):
+def save_data(filename, song_data, variable_ticks=False):
   """
   save_data takes a filename and a song in internal representation 
   (a tensor of dimensions [songlength, 3]).
@@ -1027,7 +1054,7 @@ def save_data(filename, song_data):
 
   Time steps will be fractions of beat notes (32th notes).
   """
-  print('song_data: {}'.format(song_data))
+  print('song_data[0:5]: {}'.format(song_data[0:5]))
 
   output_ticks_per_quarter_note = 8.0
 
@@ -1089,51 +1116,87 @@ def save_data(filename, song_data):
   #cur_channel = None
   future_events = {}
   last_event_tick = 0
-  for tick,frame in enumerate(song_data):
-    if tick in future_events:
+  if variable_ticks:
+    pause = 0
+    for frame in song_data:
+      # NOT IMPLEMENTED:
+      #channel = frame[4]
+      #if cur_channel && cur_channel != channel:
+      #  midi_pattern.append(cur_track)
+      #  cur_track = midi.Track()
+      #  cur_channel = channel
+      #elif cur_channel is None:
+      #  cur_channel = channel
+      tick_len = int(frame[0])
+      freq = frame[1]
+      velocity = int(frame[2])
+      d = freq_to_tone(freq)
+      if d is not None and velocity > 0 and tick_len > 0:
+        tone = int(min(max(0, d['tone']), 127)) # range-check
+        pitch_wheel = cents_to_pitchwheel_units(d['cents'])
+        print('tick_len: {}, freq: {}, tone: {}, pitch_wheel: {}, velocity: {}'.format(tick_len, freq, tone, pitch_wheel, velocity))
+        #if pitch_wheel != 0:
+        # Instead of resetting pitch after NoteOffEvents,
+        # we reset it before every NoteOnEvent.
+        cur_track.append(midi.events.PitchWheelEvent(tick=pause,
+                                                    pitch=pitch_wheel))
+        cur_track.append(midi.events.NoteOnEvent(tick=pause,
+                                                 velocity=velocity,
+                                                 pitch=tone))
+        cur_track.append(midi.events.NoteOffEvent(tick=tick_len,
+                                                  velocity=0,
+                                                  pitch=tone))
+        pause = 0
+      else:
+        pause = tick_len
+  else:
+    for tick,frame in enumerate(song_data):
+      future_ticks = future_events.keys()
+      if tick in future_ticks:
+        for event in future_events[tick]:
+          event.tick = tick-last_event_tick
+          cur_track.append(event)
+          last_event_tick = tick
+        del future_events[tick]
+      # NOT IMPLEMENTED:
+      #channel = frame[4]
+      #if cur_channel && cur_channel != channel:
+      #  midi_pattern.append(cur_track)
+      #  cur_track = midi.Track()
+      #  cur_channel = channel
+      #elif cur_channel is None:
+      #  cur_channel = channel
+      tick_len = int(frame[0])
+      end_tick = tick+tick_len
+      freq = frame[1]
+      velocity = int(frame[2])
+      d = freq_to_tone(freq)
+      if d is not None and velocity > 0 and tick_len > 0:
+        tone = int(min(max(0, d['tone']), 127)) # range-check
+        pitch_wheel = cents_to_pitchwheel_units(d['cents'])
+        print('tick_len: {}, freq: {}, tone: {}, pitch_wheel: {}, velocity: {}'.format(tick_len, freq, tone, pitch_wheel, velocity))
+        #if pitch_wheel != 0:
+        # Instead of resetting pitch after NoteOffEvents,
+        # we reset it before every NoteOnEvent.
+        cur_track.append(midi.events.PitchWheelEvent(tick=tick-last_event_tick,
+                                                    pitch=pitch_wheel))
+        cur_track.append(midi.events.NoteOnEvent(tick=tick-last_event_tick,
+                                                 velocity=velocity,
+                                                 pitch=tone))
+        last_event_tick = tick
+
+        if end_tick not in future_events:
+          future_events[end_tick] = []
+        future_events[end_tick].append(midi.events.NoteOffEvent(tick=0,
+                                                  velocity=0,
+                                                  pitch=tone))
+    future_ticks = future_events.keys()
+    for tick in future_ticks:
       for event in future_events[tick]:
         event.tick = tick-last_event_tick
         cur_track.append(event)
         last_event_tick = tick
       del future_events[tick]
-    # NOT IMPLEMENTED:
-    #channel = frame[4]
-    #if cur_channel && cur_channel != channel:
-    #  midi_pattern.append(cur_track)
-    #  cur_track = midi.Track()
-    #  cur_channel = channel
-    #elif cur_channel is None:
-    #  cur_channel = channel
-    tick_len = int(frame[0])
-    end_tick = tick+tick_len
-    freq = frame[1]
-    velocity = int(frame[2])
-    d = freq_to_tone(freq)
-    if d is not None and velocity > 0 and tick_len > 0:
-      tone = int(min(max(0, d['tone']), 127)) # range-check
-      pitch_wheel = cents_to_pitchwheel_units(d['cents'])
-      print('tick_len: {}, freq: {}, tone: {}, pitch_wheel: {}, velocity: {}'.format(tick_len, freq, tone, pitch_wheel, velocity))
-      #if pitch_wheel != 0:
-      # Instead of resetting pitch after NoteOffEvents,
-      # we reset it before every NoteOnEvent.
-      cur_track.append(midi.events.PitchWheelEvent(tick=tick-last_event_tick,
-                                                  pitch=pitch_wheel))
-      cur_track.append(midi.events.NoteOnEvent(tick=tick-last_event_tick,
-                                               velocity=velocity,
-                                               pitch=tone))
-      last_event_tick = tick
-
-      if end_tick not in future_events:
-        future_events[end_tick] = []
-      future_events[end_tick].append(midi.events.NoteOffEvent(tick=0,
-                                                velocity=0,
-                                                pitch=tone))
-  for tick in future_events:
-    for event in future_events[tick]:
-      event.tick = tick-last_event_tick
-      cur_track.append(event)
-      last_event_tick = tick
-    del future_events[tick]
   cur_track.append(midi.EndOfTrackEvent(tick=int(output_ticks_per_quarter_note)))
   midi_pattern.append(cur_track)
   print 'Printing midi track.'

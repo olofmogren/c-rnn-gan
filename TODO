@@ -5,6 +5,7 @@ TODO:
 * CNN generator? How?
 * Similarities/dissimilarities with original image paper?
 * Normalize output from G?
+* Remove all zero-units. Instead put in breaks with a length attribute.
 
 DONE:
 * Perhaps make cells correspond to a number of ticks, and not arbitrary number of microsecs?
