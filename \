@@ -57,8 +57,6 @@ flags.DEFINE_string("datadir", None, "Directory to save and load midi music file
 flags.DEFINE_string("traindir", None, "Directory to save checkpoints and gnuplot files.")
 flags.DEFINE_integer("epochs_per_checkpoint", 2,
                      "How many training epochs to do per checkpoint.")
-flags.DEFINE_boolean("log_device_placement", False,           #
-                   "Outputs info on device placement.")
 flags.DEFINE_string("call_after", None, "Call this command after exit.")
 flags.DEFINE_integer("exit_after", 200,
                      "exit after this many minutes")
@@ -88,15 +86,15 @@ flags.DEFINE_float("lr_decay", 1.0,                   # 1.0
                    "Learning rate decay after each epoch after epochs_before_decay")
 flags.DEFINE_integer("num_layers", 2,                 # 2
                    "Number of stacked recurrent cells")
-flags.DEFINE_integer("songlength", 100,               # 200, 500
+flags.DEFINE_integer("songlength", 350,               # 200, 500
                    "Limit song inputs to this number of events.")
 flags.DEFINE_integer("meta_layer_size", 200,          # 300, 600
                    "Size of hidden layer for meta information module.")
 flags.DEFINE_integer("hidden_size", 350,              # 200, 1500
                    "Hidden size for recurrent part of G.")
-flags.DEFINE_integer("epochs_before_decay", 60,       # 40, 140
+flags.DEFINE_integer("epochs_before_decay", 60,                 # 40, 140
                    "Number of epochs before starting to decay.")
-flags.DEFINE_integer("max_epoch", 500,                # 500, 500
+flags.DEFINE_integer("max_epoch", 500,            # 500, 500
                    "Number of epochs before stopping training.")
 flags.DEFINE_integer("batch_size", 20,                # 10, 20
                    "Batch size.")
@@ -106,18 +104,12 @@ flags.DEFINE_boolean("multiscale", False,             #
                    "Multiscale RNN. Not implemented.")
 flags.DEFINE_integer("pretraining_epochs", 20,        # 20, 40
                    "Number of epochs to run lang-model style pretraining.")
-flags.DEFINE_boolean("conv_d", False,                 #
+flags.DEFINE_boolean("conv_d", False,             #
                    "Convnet for D.")
-flags.DEFINE_boolean("initialize_d", False,           #
-                   "Initialize variables for D, no matter if there are trained versions in checkpoint.")
-flags.DEFINE_boolean("ignore_saved_args", False,           #
-                   "Tells the program to ignore saved arguments, and instead use the ones provided as CLI arguments.")
-flags.DEFINE_boolean("pace_events", False,           #
-                   "When parsing input data, insert one dummy event at each quarter note if there is no tone.")
 
 FLAGS = flags.FLAGS
 
-model_layout_flags = ['num_layers', 'meta_layer_size', 'hidden_size', 'biscale_slow_layer_ticks', 'multiscale', 'variable_ticks', 'multiscale', 'feed_previous', 'pace_events']
+model_layout_flags = ['num_layers', 'meta_layer_size', 'hidden_size', 'biscale_slow_layer_ticks', 'multiscale', 'variable_ticks', 'multiscale', 'feed_previous']
 
 
 def restore_flags(save_if_none_found=True):
@@ -129,9 +121,7 @@ def restore_flags(save_if_none_found=True):
     for arg in FLAGS.__flags:
       if arg not in model_layout_flags:
         continue
-      if FLAGS.ignore_saved_args and os.path.exists(os.path.join(saved_args_dir, arg+'.pkl')):
-        print('{:%Y-%m-%d %H:%M:%S}: saved_args: Found {} setting from saved state, but using CLI args ({}) and saving (--ignore_saved_args).'.format(datetime.datetime.today(), arg, getattr(FLAGS, arg)))
-      elif os.path.exists(os.path.join(saved_args_dir, arg+'.pkl')):
+      if os.path.exists(os.path.join(saved_args_dir, arg+'.pkl')):
         with open(os.path.join(saved_args_dir, arg+'.pkl'), 'r') as f:
           setattr(FLAGS, arg, pkl.load(f))
           print('{:%Y-%m-%d %H:%M:%S}: saved_args: Using {} setting from saved state ({}), ignoring CLI args.'.format(datetime.datetime.today(), arg, getattr(FLAGS, arg)))
@@ -147,18 +137,6 @@ def restore_flags(save_if_none_found=True):
 def data_type():
   #return tf.float16 if FLAGS.use_fp16 else tf.float32
   return tf.float32
-
-def my_reduce_mean(what_to_take_mean_over):
-  return tf.reshape(what_to_take_mean_over, shape=[-1])[0]
-  denom = 1.0
-  #print(what_to_take_mean_over.get_shape())
-  for d in what_to_take_mean_over.get_shape():
-    #print(d)
-    if type(d) == tf.Dimension:
-      denom = denom*d.value
-    else:
-      denom = denom*d
-  return tf.reduce_sum(what_to_take_mean_over)/denom
 
 def linear(inp, output_dim, scope=None, stddev=1.0, reuse_scope=False):
   norm = tf.random_normal_initializer(stddev=stddev)
@@ -224,9 +202,8 @@ class RNNGAN(object):
 
     inputs_lengts = inputs_attribute_splitted[0]
     generated_lengts = generated_attribute_splitted[0]
-    self.rnn_pretraining_loss_lengths = tf.reduce_mean(tf.squared_difference(x=tf.pack(tf.transpose(generated_lengts, perm=[1, 0, 2])),
-                                                                     y=inputs_lengts)
-)
+    self.rnn_pretraining_loss_lengths = tf.reduce_mean(tf.squared_difference(x=tf.pack(tf.transpose(generated_lengts, perm=[1, 0, 2])), 
+                                                                 y=inputs_lengts) )
     inputs_freqs = inputs_attribute_splitted[1]
     generated_freqs = generated_attribute_splitted[1]
     self.rnn_pretraining_loss_freqs = tf.reduce_mean(tf.squared_difference(x=tf.pack(tf.transpose(generated_freqs, perm=[1, 0, 2])), 
@@ -299,31 +276,19 @@ class RNNGAN(object):
 
   def discriminator(self, inputs, is_training):
     if FLAGS.conv_d:
-      inputs_concatenated = tf.pack(inputs, axis=1)
-      num_convfilters = 20
-      filterwidth = 5
-      input_shape = inputs_concatenated.get_shape()
-      num_song_features = input_shape[2]
+      inputs_concatenated = tf.pack(inputs, axis=2)
+      num_convfilters = 10
       conv_activations = []
-        
-      w = tf.get_variable('conv_w', [filterwidth, num_song_features, 1, num_convfilters],
-                          initializer=tf.random_normal_initializer(stddev=1.0))
-      b = tf.get_variable('conv_b', [num_convfilters],
-                          initializer=tf.random_normal_initializer(stddev=1.0))
-      # conv2d expects four dimensions: [batch, width, height, channel]
-      # Let's add a dummy channel dim:
-      inputs_concatenated = tf.expand_dims(inputs_concatenated, -1)
-      inputs_concatenated = tf.pad(inputs_concatenated, [[0,0],[2,2],[0,0],[0,0]], 'CONSTANT')
-      print('inputs_concatenated, padded: shape {}'.format(inputs_concatenated.get_shape()))
-      conv_activation = tf.nn.conv2d(inputs_concatenated, w, strides=[1, 1, 1, 1], padding='VALID')
-      print('conv_activation: shape {}'.format(conv_activation.get_shape()))
-      pooled_activation = tf.nn.max_pool(conv_activation, ksize=[1,4,1,1], strides=[1,2,1,1], padding='VALID')
-      print('pooled_activation: shape {}'.format(pooled_activation.get_shape()))
-      
-      decision = tf.sigmoid(linear(tf.reshape(pooled_activation, shape=[self.batch_size, -1]), 1, 'decision', reuse_scope=False))
-      print('decision: shape {}'.format(decision.get_shape()))
-      decision = tf.Print(decision, [decision],
-              'decision = ', summarize=20, first_n=20)
+      for i in xrange(num_convfilters):
+        w = tf.get_variable('conv_w{}'.format(i), [FLAGS.hidden_size, 5], initializer=norm)
+        # conv2d expects four dimensions: [batch, width, height, channel]
+        conv_activation = tf.nn.conv2d(inputs_concatenated, w, strides=[1, 1, 1, 1], padding='SAME')
+        pooled_activation = tf.nn.max_pool(conv_activation, ksize=[1,2,2,1], strides=[1,2,2,1], padding='SAME')
+        conv_activations.append(pooled_activation)
+      packed_activations = tf.pack(conv_activations, axis=3)
+      # TODO: following lines are not done.
+      decisions = [tf.sigmoid(linear(packed_activations, 1, 'decision', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
+      decision = tf.reduce_mean(tf.pack(decisions))
       return decision
 
     else:
@@ -333,7 +298,7 @@ class RNNGAN(object):
         lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
             lstm_cell, output_keep_prob=FLAGS.keep_prob)
       cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers, state_is_tuple=True)
-      self._initial_state = cell.zero_state(self.batch_size, data_type())
+      self._initial_state = cell.zero_state(FLAGS.batch_size, data_type())
       if is_training and FLAGS.keep_prob < 1:
         inputs = [tf.nn.dropout(inp, FLAGS.keep_prob) for inp in inputs]
       outputs, state = tf.nn.rnn(cell, inputs, initial_state=self._initial_state)
@@ -393,11 +358,6 @@ def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, pretrain
   g_losses, d_losses = 0.0, 0.0
   iters = 0
   #state = session.run(model.initial_state)
-  time_before_graph = None
-  time_after_graph = None
-  times_in_graph = []
-  times_in_python = []
-  #times_in_batchreading = []
   loader.rewind(part=datasetlabel)
   [batch_meta, batch_song] = loader.get_batch(model.batch_size, model.songlength, part=datasetlabel)
   while batch_meta is not None and batch_song is not None:
@@ -410,17 +370,17 @@ def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, pretrain
         #saver.save(session, checkpoint_path, global_step=m.global_step)
         #break
       elif d_loss == 0.0:
-        print('D train loss is zero. Freezing optimization. G loss: {:.3f}'.format(g_loss))
+        print('D train loss is zero. Pausing optimization. G loss: {:.3f}'.format(g_loss))
         op1 = tf.no_op()
       elif g_loss == 0.0: 
-        print('G train loss is zero. Freezing optimization. D loss: {:.3f}'.format(d_loss))
+        print('G train loss is zero. Pausing optimization. D loss: {:.3f}'.format(d_loss))
         op2 = tf.no_op()
       elif g_loss < 2.0 or d_loss < 2.0:
         if g_loss*.7 > d_loss:
-          print('G train loss is {:.3f}, D train loss is {:.3f}. Freezing optimization of D'.format(g_loss, d_loss))
+          print('G train loss is {:.3f}, D train loss is {:.3f}. Pausing optimization of D'.format(g_loss, d_loss))
           op1 = tf.no_op()
         elif d_loss*.7 > g_loss:
-          print('G train loss is {:.3f}, D train loss is {:.3f}. Freezing optimization of G'.format(g_loss, d_loss))
+          print('G train loss is {:.3f}, D train loss is {:.3f}. Pausing optimization of G'.format(g_loss, d_loss))
         op2 = tf.no_op()
     #fetches = [model.cost, model.final_state, eval_op]
     if pretraining:
@@ -437,13 +397,7 @@ def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, pretrain
     #  feed_dict[c] = state[i].c
     #  feed_dict[h] = state[i].h
     #cost, state, _ = session.run(fetches, feed_dict)
-    time_before_graph = time.time()
-    if iters > 0:
-      times_in_python.append(time_before_graph-time_after_graph)
     g_loss, d_loss, _, _ = session.run(fetches, feed_dict)
-    time_after_graph = time.time()
-    if iters > 0:
-      times_in_graph.append(time_after_graph-time_before_graph)
     g_losses += g_loss
     if not pretraining:
       d_losses += d_loss
@@ -451,16 +405,11 @@ def run_epoch(session, model, loader, datasetlabel, eval_op1, eval_op2, pretrain
 
     if verbose and iters % 10 == 9:
       songs_per_sec = float(iters * model.batch_size)/float(time.time() - epoch_start_time)
-      avg_time_in_graph = float(sum(times_in_graph))/float(len(times_in_graph))
-      avg_time_in_python = float(sum(times_in_python))/float(len(times_in_python))
-      #avg_time_batchreading = float(sum(times_in_batchreading))/float(len(times_in_batchreading))
       if pretraining:
-        print("{}: {} (pretraining) batch loss: G: {:.3f}, avg loss: G: {:.3f}, speed: {:.1f} songs/s, avg in graph: {}, avg in python: {}.".format(datasetlabel, iters, g_loss, float(g_losses)/float(iters), songs_per_sec, avg_time_in_graph, avg_time_in_python))
+        print("{}: {} (pretraining) batch loss: G: {:.3f}, avg loss: G: {:.3f}, speed: {:.1f} songs per sec".format(datasetlabel, iters, g_loss, float(g_losses)/float(iters), songs_per_sec))
       else:
-        print("{}: {} batch loss: G: {:.3f}, D: {:.3f}, avg loss: G: {:.3f}, D: {:.3f} speed: {:.1f} songs/s, avg in graph: {}, avg in python: {}.".format(datasetlabel, iters, g_loss, d_loss, float(g_losses)/float(iters), float(d_losses)/float(iters),songs_per_sec, avg_time_in_graph, avg_time_in_python))
-    #batchtime = time.time()
+        print("{}: {} batch loss: G: {:.3f}, D: {:.3f}, avg loss: G: {:.3f}, D: {:.3f} speed: {:.1f} songs per sec".format(datasetlabel, iters, g_loss, d_loss, float(g_losses)/float(iters), float(d_losses)/float(iters),songs_per_sec))
     [batch_meta, batch_song] = loader.get_batch(model.batch_size, model.songlength, part=datasetlabel)
-    #times_in_batchreading.append(time.time()-batchtime)
 
   if iters == 0:
     return (None,None)
@@ -521,7 +470,7 @@ def main(_):
 
   songfeatures_filename = os.path.join(FLAGS.traindir, 'num_song_features.pkl')
   metafeatures_filename = os.path.join(FLAGS.traindir, 'num_meta_features.pkl')
-  loader = music_data_utils.MusicDataLoader(FLAGS.datadir, FLAGS.select_validation_percentage, FLAGS.select_test_percentage, FLAGS.variable_ticks, FLAGS.works_per_composer, FLAGS.pace_events)
+  loader = music_data_utils.MusicDataLoader(FLAGS.datadir, FLAGS.select_validation_percentage, FLAGS.select_test_percentage, FLAGS.variable_ticks, FLAGS.works_per_composer)
   num_song_features = loader.get_num_song_features()
   print('num_song_features:{}'.format(num_song_features))
   num_meta_features = loader.get_num_meta_features()
@@ -535,37 +484,19 @@ def main(_):
   if global_step < FLAGS.pretraining_epochs:
     #FLAGS.songlength = int(min(((global_step+10)/10)*10,songlength_ceiling))
     FLAGS.songlength = int(min((global_step+1)*4,songlength_ceiling))
- 
-  with tf.Graph().as_default(), tf.Session(config=tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)) as session:
+  
+  with tf.Graph().as_default(), tf.Session() as session:
     with tf.variable_scope("model", reuse=None):
       m = RNNGAN(is_training=True, num_song_features=num_song_features, num_meta_features=num_meta_features)
 
-
-    if FLAGS.initialize_d:
-      vars_to_restore = {}
-      for v in tf.trainable_variables():
-        if v.name.startswith('model/G/'):
-          print(v.name[:-2])
-          vars_to_restore[v.name[:-2]] = v
-      saver = tf.train.Saver(vars_to_restore)
-      ckpt = tf.train.get_checkpoint_state(FLAGS.traindir)
-      if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path):
-        print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-        saver.restore(session, ckpt.model_checkpoint_path)
-        session.run(tf.initialize_variables([v for v in tf.trainable_variables() if v.name.startswith('model/D/')]))
-      else:
-        print("Created model with fresh parameters.")
-        session.run(tf.initialize_all_variables())
-      saver = tf.train.Saver(tf.all_variables())
+    saver = tf.train.Saver(tf.all_variables())
+    ckpt = tf.train.get_checkpoint_state(FLAGS.traindir)
+    if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path):
+      print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
+      saver.restore(session, ckpt.model_checkpoint_path)
     else:
-      saver = tf.train.Saver(tf.all_variables())
-      ckpt = tf.train.get_checkpoint_state(FLAGS.traindir)
-      if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path):
-        print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-        saver.restore(session, ckpt.model_checkpoint_path)
-      else:
-        print("Created model with fresh parameters.")
-        session.run(tf.initialize_all_variables())
+      print("Created model with fresh parameters.")
+      session.run(tf.initialize_all_variables())
 
     i = global_step
     if not FLAGS.sample:

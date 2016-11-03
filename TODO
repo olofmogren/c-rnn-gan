@@ -1,12 +1,15 @@
 TODO:
 1 multiscale RNN. Quarter notes. Complete bars?
 2 Bidirectional generator.
+* Look at real music in internal representation.
+* CNN discriminator?
 
-* CNN generator? How?
+Scoring output.
+
 * Similarities/dissimilarities with original image paper?
 * Normalize output from G?
 
-* CNN discriminator?
+* CNN generator? How?
 * MLP discriminator?
 
 DONE:
