@@ -196,6 +196,12 @@ def get_polyphony_score(midi_pattern):
         polyphonous_events += 1
       tones_in_current_event = 1
     last_abs_tick = abs_tick
+    if tones_in_current_event == 1:
+      monophonous_events += 1
+    elif tones_in_current_event > 1:
+      polyphonous_events += 1
+  if polyphonous_events == 0:
+    return 0.0
   return float(polyphonous_events)/(polyphonous_events+monophonous_events)
 
 
@@ -398,6 +404,7 @@ def get_all_stats(midi_pattern):
   if len(tones) == 0:
     print('This is an empty song.')
     return None
+  stats['num_tones'] = len(tones)
   stats['tone_min'] = min(tones)
   stats['freq_min'] = tone_to_freq(min(tones))
   stats['tone_max'] = max(tones)
@@ -433,58 +440,68 @@ def get_all_stats(midi_pattern):
 
   stats['polyphony_score'] = get_polyphony_score(midi_pattern)
   stats['top_10_intervals'] = get_top_k_intervals(midi_pattern, 10)
-  stats['top_2_interval_difference'] = abs(stats['top_10_intervals'][1][0]-stats['top_10_intervals'][0][0])
-  stats['top_3_interval_difference'] = abs(stats['top_10_intervals'][2][0]-stats['top_10_intervals'][0][0])
+  stats['top_2_interval_difference'] = 0.0
+  if len(stats['top_10_intervals']) > 1:
+    stats['top_2_interval_difference'] = abs(stats['top_10_intervals'][1][0]-stats['top_10_intervals'][0][0])
+  stats['top_3_interval_difference'] = 0.0
+  if len(stats['top_10_intervals']) > 2:
+    stats['top_3_interval_difference'] = abs(stats['top_10_intervals'][2][0]-stats['top_10_intervals'][0][0])
 
   return stats
 
-def get_gnuplot_line(midi_patterns, i):
+def get_gnuplot_line(midi_patterns, i, showheader=True):
   stats = []
-  print('getting stats...')
+  print('#getting stats...')
   stats_time = time.time()
   for p in midi_patterns:
     stats.append(get_all_stats(p))
   print('done. time: {}'.format(time.time()-stats_time))
   #print(stats)
   stats_keys_string = ['scale']
-  stats_keys = ['scale_score', 'tone_min', 'tone_max', 'tone_span', 'freq_min', 'freq_max', 'freq_span', 'tones_unique', 'repetitions_2', 'repetitions_3', 'repetitions_4', 'repetitions_5', 'repetitions_6', 'repetitions_7', 'repetitions_8', 'repetitions_9', 'estimated_beat', 'estimated_beat_avg_ticks_off', 'intensity_min', 'intensity_max', 'intensity_span', 'polyphony_score', 'top_2_interval_difference', 'top_3_interval_difference']
-  gnuplotline = '# global-step {} {}\n'.format(' '.join([s.replace(' ', '_') for s in stats_keys_string]), ' '.join(stats_keys))
-  gnuplotine += '{} {} {}\n'.format(i, ' '.join(['{}'.format(stats[0][key].replace(' ', '_')) for key in stats_keys_string]), ' '.join(['{:.3f}'.format(sum([s[key] for s in stats])/float(len(stats))) for key in stats_keys]))
+  stats_keys = ['scale_score', 'tone_min', 'tone_max', 'tone_span', 'freq_min', 'freq_max', 'freq_span', 'tones_unique', 'repetitions_2', 'repetitions_3', 'repetitions_4', 'repetitions_5', 'repetitions_6', 'repetitions_7', 'repetitions_8', 'repetitions_9', 'estimated_beat', 'estimated_beat_avg_ticks_off', 'intensity_min', 'intensity_max', 'intensity_span', 'polyphony_score', 'top_2_interval_difference', 'top_3_interval_difference', 'num_tones']
+  gnuplotline = ''
+  if showheader:
+    gnuplotline = '# global-step {} {}\n'.format(' '.join([s.replace(' ', '_') for s in stats_keys_string]), ' '.join(stats_keys))
+  gnuplotline += '{} {} {}\n'.format(i, ' '.join(['{}'.format(stats[0][key].replace(' ', '_')) for key in stats_keys_string]), ' '.join(['{:.3f}'.format(sum([s[key] for s in stats])/float(len(stats))) for key in stats_keys]))
   return gnuplotline
+
+
 
 def main():
   if len(sys.argv) > 2 and sys.argv[1] == '--gnuplot':
-    number = sys.argv[2]
+    #number = sys.argv[2]
     patterns = []
     for i in range(3,len(sys.argv)):
+      #print(i)
+      filename = sys.argv[i]
+      print('#File: {}'.format(filename))
+      #patterns.append(get_midi_pattern(filename))
+      print(get_gnuplot_line([get_midi_pattern(filename)], i, showheader=(i==0)))
+    
+  else:
+    for i in range(1,len(sys.argv)):
       filename = sys.argv[i]
       print('File: {}'.format(filename))
-      patterns.append(get_midi_pattern(filename))
-    print(get_gnuplot_line(patterns, number))
-    
-  for i in range(1,len(sys.argv)):
-    filename = sys.argv[i]
-    print('File: {}'.format(filename))
-    midi_pattern = get_midi_pattern(filename)
-    stats = get_all_stats(midi_pattern)
-    if stats is None:
-      print('Could not extract stats.')
-    else:
-      print ('ML scale estimate: {}: {:.2f}'.format(stats['scale'], stats['scale_score']))
-      print ('Min tone: {}, {:.1f} Hz.'.format(tone_to_tone_name(stats['tone_min']), stats['freq_min']))
-      print ('Max tone: {}, {:.1f} Hz.'.format(tone_to_tone_name(stats['tone_max']), stats['freq_max']))
-      print ('Span: {} tones, {:.1f} Hz.'.format(stats['tone_span'], stats['freq_span']))
-      print ('Unique tones: {}'.format(stats['tones_unique']))
-      for r in xrange(2,10):
-        print('Repetitions of len {}: {}'.format(r, stats['repetitions_{}'.format(r)]))
-      print('Estimated beat: {}. Avg ticks off: {:.2f}.'.format(stats['estimated_beat'], stats['estimated_beat_avg_ticks_off']))
-      print('Intensity: min: {}, max: {}.'.format(stats['intensity_min'], stats['intensity_max']))
-      print('Polyphonous events: {:.2f}.'.format(stats['polyphony_score']))
-      print('Top intervals:')
-      for interval,score in stats['top_10_intervals']:
-        print('{}: {:.2f}.'.format(interval,score))
-      print('Top 2 interval difference: {}.'.format(stats['top_2_interval_difference']))
-      print('Top 3 interval difference: {}.'.format(stats['top_3_interval_difference']))
+      midi_pattern = get_midi_pattern(filename)
+      stats = get_all_stats(midi_pattern)
+      if stats is None:
+        print('Could not extract stats.')
+      else:
+        print ('ML scale estimate: {}: {:.2f}'.format(stats['scale'], stats['scale_score']))
+        print ('Min tone: {}, {:.1f} Hz.'.format(tone_to_tone_name(stats['tone_min']), stats['freq_min']))
+        print ('Max tone: {}, {:.1f} Hz.'.format(tone_to_tone_name(stats['tone_max']), stats['freq_max']))
+        print ('Span: {} tones, {:.1f} Hz.'.format(stats['tone_span'], stats['freq_span']))
+        print ('Unique tones: {}'.format(stats['tones_unique']))
+        for r in xrange(2,10):
+          print('Repetitions of len {}: {}'.format(r, stats['repetitions_{}'.format(r)]))
+        print('Estimated beat: {}. Avg ticks off: {:.2f}.'.format(stats['estimated_beat'], stats['estimated_beat_avg_ticks_off']))
+        print('Intensity: min: {}, max: {}.'.format(stats['intensity_min'], stats['intensity_max']))
+        print('Polyphonous events: {:.2f}.'.format(stats['polyphony_score']))
+        print('Top intervals:')
+        for interval,score in stats['top_10_intervals']:
+          print('{}: {:.2f}.'.format(interval,score))
+        print('Top 2 interval difference: {}.'.format(stats['top_2_interval_difference']))
+        print('Top 3 interval difference: {}.'.format(stats['top_3_interval_difference']))
 
 
 if __name__ == "__main__":

@@ -24,15 +24,16 @@ GENRE      = 0
 COMPOSER   = 1
 SONG_DATA  = 2
 
-# INDICES IN BATCHES:
-LENGTH     = 0
-FREQ       = 1
-VELOCITY   = 2
-TICKS_FROM_PREV_START      = 3
+# INDICES IN BATCHES (LENGTH,FREQ,VELOCITY are repeated self.tones_per_cell times):
+TICKS_FROM_PREV_START      = 0
+LENGTH     = 1
+FREQ       = 2
+VELOCITY   = 3
 
 # INDICES IN SONG DATA (NOT YET BATCHED):
-BEGIN_TICK = 3
-CHANNEL    = 4
+BEGIN_TICK = 0
+
+NUM_FEATURES_PER_TONE = 3
 
 debug = ''
 #debug = 'overfit'
@@ -674,9 +675,11 @@ file_list['test'] = ['classical/mozart/245div1.mid', \
 
 class MusicDataLoader(object):
 
-  def __init__(self, datadir, select_validation_percentage, select_test_percentage, works_per_composer=None, pace_events=False, synthetic=None):
+  def __init__(self, datadir, select_validation_percentage, select_test_percentage, works_per_composer=None, pace_events=False, synthetic=None, tones_per_cell=1, single_composer=None):
     self.datadir = datadir
     self.output_ticks_per_quarter_note = 384.0
+    self.tones_per_cell = tones_per_cell
+    self.single_composer = single_composer
     self.pointer = {}
     self.pointer['validation'] = 0
     self.pointer['test'] = 0
@@ -837,9 +840,18 @@ class MusicDataLoader(object):
           third = base_tone+minor_third_offset
         fifth = base_tone+fifth_offset
 
-        song_data.append([length, tone_to_freq(base_tone), velocity, begin_tick, 0])
-        song_data.append([length, tone_to_freq(third), velocity, begin_tick, 0])
-        song_data.append([length, tone_to_freq(fifth), velocity, begin_tick, 0])
+        note = [0.0]*(NUM_FEATURES_PER_TONE+1)
+        note[LENGTH]     = length
+        note[FREQ]       = tone_to_freq(base_tone)
+        note[VELOCITY]   = velocity
+        note[BEGIN_TICK] = begin_tick
+        song_data.append(note)
+        note2 = note[:]
+        note2[FREQ] = tone_to_freq(third)
+        song_data.append(note2)
+        note3 = note[:]
+        note3[FREQ] = tone_to_freq(fifth)
+        song_data.append(note3)
       song_data.sort(key=lambda e: e[BEGIN_TICK])
       #print(song_data)
       #sys.exit()
@@ -888,13 +900,16 @@ class MusicDataLoader(object):
 
     self.genres = sorted(sources.keys())
     print('num genres:{}'.format(len(self.genres)))
-    self.composers = []
-    for genre in self.genres:
-      self.composers.extend(sources[genre].keys())
-    if debug == 'overfit':
-      self.composers = self.composers[0:1]
-    self.composers = list(set(self.composers))
-    self.composers.sort()
+    if self.single_composer is not None:
+      self.composers = [self.single_composer]
+    else:
+      self.composers = []
+      for genre in self.genres:
+        self.composers.extend(sources[genre].keys())
+      if debug == 'overfit':
+        self.composers = self.composers[0:1]
+      self.composers = list(set(self.composers))
+      self.composers.sort()
     print('num composers: {}'.format(len(self.composers)))
     print('limit works per composer: {}'.format(works_per_composer))
 
@@ -907,8 +922,8 @@ class MusicDataLoader(object):
     #composer_id   = 0
     if select_validation_percentage or select_test_percentage:
       filelist = []
-      for genre in sources:
-        for composer in sources[genre]:
+      for genre in self.genres:
+        for composer in self.composers:
           current_path = os.path.join(self.datadir,os.path.join(genre, composer))
           if not os.path.exists(current_path):
             print 'Path does not exist: {}'.format(current_path)
@@ -941,10 +956,10 @@ class MusicDataLoader(object):
     # OVERFIT
     count = 0
 
-    for genre in sources:
+    for genre in self.genres:
       # OVERFIT
       if debug == 'overfit' and count > 20: break
-      for composer in sources[genre]:
+      for composer in self.composers:
         # OVERFIT
         if debug == 'overfit' and composer not in self.composers: continue
         if debug == 'overfit' and count > 20: break
@@ -1086,8 +1101,12 @@ class MusicDataLoader(object):
           not_closed_notes = retained_not_closed_notes
         elif type(event) == midi.events.NoteOnEvent:
           begin_tick = float(event.tick+last_event_input_tick)/input_ticks_per_output_tick
-          velocity = float(event.data[1])
-          not_closed_notes.append([0.0, tone_to_freq(event.data[0]), velocity, begin_tick, event.channel])
+          note = [0.0]*(NUM_FEATURES_PER_TONE+1)
+          note[FREQ]       = tone_to_freq(event.data[0])
+          note[VELOCITY]   = float(event.data[1])
+          note[BEGIN_TICK] = begin_tick
+          not_closed_notes.append(note)
+          #not_closed_notes.append([0.0, tone_to_freq(event.data[0]), velocity, begin_tick, event.channel])
         last_event_input_tick += event.tick
       for e in not_closed_notes:
         #print('Warning: found no NoteOffEvent for this note. Will close it. {}'.format(e))
@@ -1147,7 +1166,8 @@ class MusicDataLoader(object):
       self.pointer[part] += batchsize
       # subtract two for start-time and channel, which we don't include.
       num_meta_features = len(self.genres)+len(self.composers)
-      num_song_features = len(batch[0][SONG_DATA][0])-1
+      # All features except timing are multiplied with tones_per_cell (default 1)
+      num_song_features = NUM_FEATURES_PER_TONE*self.tones_per_cell+1
       batch_genrecomposer = np.ndarray(shape=[batchsize, num_meta_features])
       batch_songs = np.ndarray(shape=[batchsize, songlength, num_song_features])
       #print 'batch shape: {}'.format(batch_songs.shape)
@@ -1160,30 +1180,42 @@ class MusicDataLoader(object):
         
         
         #random position:
-        if len(batch[s][SONG_DATA]) <= songlength:
-          begin = 0
-          end = len(batch[s][SONG_DATA])
-        else:
-          begin = random.randint(0, len(batch[s][SONG_DATA])-songlength)
-          end = begin+songlength
+        begin = 0
+        if len(batch[s][SONG_DATA]) > songlength*self.tones_per_cell:
+          begin = random.randint(0, len(batch[s][SONG_DATA])-songlength*self.tones_per_cell)
         matrixrow = 0
-        for n in xrange(begin, end):
-          # TODO: channels!
-          # If people are using the higher resolution of the
-          # original midi file, we will get the rounding errors
-          # right here. But it will be rounded to 'real' 32th notes.
-          event = np.copy(batch[s][SONG_DATA][n][:4]) # last number in array will be discarded; overwritten with ticks_from_prev_start.
-          ticks_from_start_of_prev_tone = 0.0
-          if n>0:
-            # beginning of this tone, minus starting of previous
-            ticks_from_start_of_prev_tone = batch[s][SONG_DATA][n][BEGIN_TICK]-batch[s][SONG_DATA][n-1][BEGIN_TICK]
-            # we don't include start-time at index 0:
-            # and not channel at -1.
-          # tones are allowed to overlap. This is indicated with
-          # relative time zero in the midi spec.
-          event[TICKS_FROM_PREV_START] = ticks_from_start_of_prev_tone
+        n = begin
+        while matrixrow < songlength:
+          eventindex = 0
+          event = np.zeros(shape=[num_song_features])
+          if n < len(batch[s][SONG_DATA]):
+            event[LENGTH]   = batch[s][SONG_DATA][n][LENGTH]
+            event[FREQ]     = batch[s][SONG_DATA][n][FREQ]
+            event[VELOCITY] = batch[s][SONG_DATA][n][VELOCITY]
+            ticks_from_start_of_prev_tone = 0.0
+            if n>0:
+              # beginning of this tone, minus starting of previous
+              ticks_from_start_of_prev_tone = batch[s][SONG_DATA][n][BEGIN_TICK]-batch[s][SONG_DATA][n-1][BEGIN_TICK]
+              # we don't include start-time at index 0:
+              # and not channel at -1.
+            # tones are allowed to overlap. This is indicated with
+            # relative time zero in the midi spec.
+            event[TICKS_FROM_PREV_START] = ticks_from_start_of_prev_tone
+            tone_count = 1
+            for simultaneous in xrange(1,self.tones_per_cell):
+              if n+simultaneous >= len(batch[s][SONG_DATA]):
+                break
+              if batch[s][SONG_DATA][n+simultaneous][BEGIN_TICK]-batch[s][SONG_DATA][n][BEGIN_TICK] == 0:
+                offset = simultaneous*NUM_FEATURES_PER_TONE
+                event[offset+LENGTH]   = batch[s][SONG_DATA][n+simultaneous][LENGTH]
+                event[offset+FREQ]     = batch[s][SONG_DATA][n+simultaneous][FREQ]
+                event[offset+VELOCITY] = batch[s][SONG_DATA][n+simultaneous][VELOCITY]
+                tone_count += 1
+              else:
+                break
           songmatrix[matrixrow,:] = event
           matrixrow += 1
+          n += tone_count
         #if s == 0 and self.pointer[part] == batchsize:
         #  print songmatrix[0:10,:]
         batch_genrecomposer[s,:] = genrecomposer
@@ -1196,15 +1228,14 @@ class MusicDataLoader(object):
       raise 'get_batch() called but self.songs is not initialized.'
   
   def get_num_song_features(self):
-    num_song_features = len(self.songs['train'][0][SONG_DATA][0])-1
-    return num_song_features
+    return NUM_FEATURES_PER_TONE*self.tones_per_cell+1
   def get_num_meta_features(self):
     return len(self.genres)+len(self.composers)
 
   def get_midi_pattern(self, song_data):
     """
-    get_midi_pattern a song in internal representation 
-    (a tensor of dimensions [songlength, 3]).
+    get_midi_pattern takes a song in internal representation 
+    (a tensor of dimensions [songlength, self.num_song_features]).
     the three values are length, frequency, velocity.
     if velocity of a frame is zero, no midi event will be
     triggered at that frame.
@@ -1253,18 +1284,8 @@ class MusicDataLoader(object):
     # and looking at some files. It will hopefully be enough
     # for the use in this project.
     #
-    # We'll save the data intermediately with a dict representing each tone.
-    # The dicts we put into a list. Times are microseconds.
-    # Keys: 'freq', 'velocity', 'begin-tick', 'tick-length'
-    #
-    # 'Output ticks resolution' are fixed at a 32th note,
-    #   - so 8 ticks per quarter note.
-    #
     # This approach means that we do not currently support
     #   tempo change events.
-    #
-    # TODO 1: Figure out pitch.
-    # TODO 2: Figure out different channels and instruments.
     #
     
     # Tempo:
@@ -1272,44 +1293,42 @@ class MusicDataLoader(object):
     midi_pattern = midi.Pattern([], resolution=int(self.output_ticks_per_quarter_note))
     cur_track = midi.Track([])
     cur_track.append(midi.events.SetTempoEvent(tick=0, bpm=45))
-    #cur_channel = None
     future_events = {}
     last_event_tick = 0
     
-    # TODO fix ticks to next tone.
     ticks_to_this_tone = 0.0
     song_events_absolute_ticks = []
     abs_tick_note_beginning = 0.0
     for frame in song_data:
-      tick_len           = int(round(frame[LENGTH]))
-      freq               = frame[FREQ]
-      velocity           = min(int(round(frame[VELOCITY])),127)
-      print('tick_len: {}, freq: {}, velocity: {}, ticks_from_prev_start: {}'.format(tick_len, freq, velocity, frame[TICKS_FROM_PREV_START]))
-      d = freq_to_tone(freq)
-      print('d: {}'.format(d))
       abs_tick_note_beginning += frame[TICKS_FROM_PREV_START]
-      if d is not None and velocity > 0 and tick_len > 0:
-        # range-check with preserved tone, changed one octave:
-        tone = d['tone']
-        while tone < 0:   tone += 12
-        while tone > 127: tone -= 12
-        pitch_wheel = cents_to_pitchwheel_units(d['cents'])
-        print('tick_len: {}, freq: {}, tone: {}, pitch_wheel: {}, velocity: {}'.format(tick_len, freq, tone, pitch_wheel, velocity))
-        #if pitch_wheel != 0:
-        # Instead of resetting pitch after NoteOffEvents,
-        # we reset it before every NoteOnEvent.
-        #midi.events.PitchWheelEvent(tick=int(ticks_to_this_tone),
-        #                                            pitch=pitch_wheel)
-        song_events_absolute_ticks.append((abs_tick_note_beginning,
-                                           midi.events.NoteOnEvent(
-                                                 tick=0,
-                                                 velocity=velocity,
-                                                 pitch=tone)))
-        song_events_absolute_ticks.append((abs_tick_note_beginning+tick_len,
-                                           midi.events.NoteOffEvent(
-                                                  tick=0,
-                                                  velocity=0,
-                                                  pitch=tone)))
+      for subframe in xrange(self.tones_per_cell):
+        offset = subframe*NUM_FEATURES_PER_TONE
+        tick_len           = int(round(frame[offset+LENGTH]))
+        freq               = frame[offset+FREQ]
+        velocity           = min(int(round(frame[offset+VELOCITY])),127)
+        print('tick_len: {}, freq: {}, velocity: {}, ticks_from_prev_start: {}'.format(tick_len, freq, velocity, frame[TICKS_FROM_PREV_START]))
+        d = freq_to_tone(freq)
+        #print('d: {}'.format(d))
+        if d is not None and velocity > 0 and tick_len > 0:
+          # range-check with preserved tone, changed one octave:
+          tone = d['tone']
+          while tone < 0:   tone += 12
+          while tone > 127: tone -= 12
+          pitch_wheel = cents_to_pitchwheel_units(d['cents'])
+          #print('tick_len: {}, freq: {}, tone: {}, pitch_wheel: {}, velocity: {}'.format(tick_len, freq, tone, pitch_wheel, velocity))
+          #if pitch_wheel != 0:
+          #midi.events.PitchWheelEvent(tick=int(ticks_to_this_tone),
+          #                                            pitch=pitch_wheel)
+          song_events_absolute_ticks.append((abs_tick_note_beginning,
+                                             midi.events.NoteOnEvent(
+                                                   tick=0,
+                                                   velocity=velocity,
+                                                   pitch=tone)))
+          song_events_absolute_ticks.append((abs_tick_note_beginning+tick_len,
+                                             midi.events.NoteOffEvent(
+                                                    tick=0,
+                                                    velocity=0,
+                                                    pitch=tone)))
     song_events_absolute_ticks.sort(key=lambda e: e[0])
     abs_tick_note_beginning = 0.0
     for abs_tick,event in song_events_absolute_ticks:
