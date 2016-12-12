@@ -1,8 +1,10 @@
 #!/bin/bash
 
-cd /home/mogren/sync/code/mogren/pg-s2s/run/
-SETTINGS_LOG_DIR=/home/mogren/experiments/2016-rnn-gan/logs/2016-11-29-pretrainingonly-restart
-mkdir -p $SETTINGS_LOG_DIR
+cd /home/mogren/sync/code/mogren/c-rnn-gan/run/
 
+source settings2.sh
+
+echo $SETTINGS_LOG_DIR/run_job.sh.error 
+echo $SETTINGS_LOG_DIR/run_job.sh.log
 /usr/bin/qsub -cwd -l gpu=1 -e $SETTINGS_LOG_DIR/run_job.sh.error -o $SETTINGS_LOG_DIR/run_job.sh.log /home/mogren/sync/code/mogren/c-rnn-gan/run/job2.sh
 

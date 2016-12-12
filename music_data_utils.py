@@ -819,6 +819,7 @@ class MusicDataLoader(object):
       
       song_data = []
       key = random.randint(0,100)
+      #key = 50
 
       # Tempo:
       ticks_per_quarter_note = 384
@@ -863,12 +864,13 @@ class MusicDataLoader(object):
           song_data.append([0.0, 440.0, 0.0, pace_tick, 0.0])
           pace_tick += float(ticks_per_quarter_note)/input_ticks_per_output_tick
         song_data.sort(key=lambda e: e[BEGIN_TICK])
-      #if self.datadir is not None and write_files:
-      #  filename = os.path.join(dirnameforallfiles, '{}.mid'.format(i))
-      #  if not os.path.exists(filename):
-      #    self.save_data(filename, song_data)
-      #  else:
-      #    print('file exists. Not overwriting: {}.'.format(filename))
+      if self.datadir is not None and i==0:
+        filename = os.path.join(self.datadir, '{}.mid'.format(i))
+        if not os.path.exists(filename):
+          print('saving: {}.'.format(filename))
+          self.save_data(filename, song_data)
+        else:
+          print('file exists. Not overwriting: {}.'.format(filename))
       
       if i%100 == 0:
         self.songs['validation'].append([genre, composer, song_data])
@@ -1306,7 +1308,7 @@ class MusicDataLoader(object):
         tick_len           = int(round(frame[offset+LENGTH]))
         freq               = frame[offset+FREQ]
         velocity           = min(int(round(frame[offset+VELOCITY])),127)
-        print('tick_len: {}, freq: {}, velocity: {}, ticks_from_prev_start: {}'.format(tick_len, freq, velocity, frame[TICKS_FROM_PREV_START]))
+        #print('tick_len: {}, freq: {}, velocity: {}, ticks_from_prev_start: {}'.format(tick_len, freq, velocity, frame[TICKS_FROM_PREV_START]))
         d = freq_to_tone(freq)
         #print('d: {}'.format(d))
         if d is not None and velocity > 0 and tick_len > 0:
@@ -1339,8 +1341,8 @@ class MusicDataLoader(object):
     
     cur_track.append(midi.EndOfTrackEvent(tick=int(self.output_ticks_per_quarter_note)))
     midi_pattern.append(cur_track)
-    print 'Printing midi track.'
-    print midi_pattern
+    #print 'Printing midi track.'
+    #print midi_pattern
     return midi_pattern
 
   def save_midi_pattern(self, filename, midi_pattern):

@@ -69,11 +69,11 @@ flags.DEFINE_boolean("sample", False,
                      "Sample output from the model. Assume training was already done. Save sample output to file.")
 flags.DEFINE_integer("works_per_composer", None,
                      "Limit number of works per composer that is loaded.")
-flags.DEFINE_boolean("feed_previous", False,
+flags.DEFINE_boolean("disable_feed_previous", False,
                      "Feed output from previous cell to the input of the next. In the generator.")
 flags.DEFINE_float("init_scale", 0.05,                # .1, .04
                    "the initial scale of the weights")
-flags.DEFINE_float("learning_rate", 0.9,              # .9 
+flags.DEFINE_float("learning_rate", 0.1,              # .05,.1,.9 
                    "Learning rate")
 flags.DEFINE_float("d_lr_factor", 0.5,                # .5
                    "Learning rate decay")
@@ -83,14 +83,18 @@ flags.DEFINE_float("keep_prob", 0.5,                  # 1.0, .35
                    "Keep probability. 1.0 disables dropout.")
 flags.DEFINE_float("lr_decay", 1.0,                   # 1.0
                    "Learning rate decay after each epoch after epochs_before_decay")
-flags.DEFINE_integer("num_layers", 2,                 # 2
-                   "Number of stacked recurrent cells")
+flags.DEFINE_integer("num_layers_g", 2,                 # 2
+                   "Number of stacked recurrent cells in G.")
+flags.DEFINE_integer("num_layers_d", 2,                 # 2
+                   "Number of stacked recurrent cells in D.")
 flags.DEFINE_integer("songlength", 100,               # 200, 500
                    "Limit song inputs to this number of events.")
 flags.DEFINE_integer("meta_layer_size", 200,          # 300, 600
                    "Size of hidden layer for meta information module.")
-flags.DEFINE_integer("hidden_size", 350,              # 200, 1500
+flags.DEFINE_integer("hidden_size_g", 350,              # 200, 1500
                    "Hidden size for recurrent part of G.")
+flags.DEFINE_integer("hidden_size_d", 350,              # 200, 1500
+                   "Hidden size for recurrent part of D. Default: same as for G.")
 flags.DEFINE_integer("epochs_before_decay", 60,       # 40, 140
                    "Number of epochs before starting to decay.")
 flags.DEFINE_integer("max_epoch", 500,                # 500, 500
@@ -101,12 +105,10 @@ flags.DEFINE_integer("biscale_slow_layer_ticks", 8,   # 8
                    "Biscale slow layer ticks. Not implemented yet.")
 flags.DEFINE_boolean("multiscale", False,             #
                    "Multiscale RNN. Not implemented.")
-flags.DEFINE_integer("pretraining_epochs", 20,        # 20, 40
+flags.DEFINE_integer("pretraining_epochs", 6,        # 20, 40
                    "Number of epochs to run lang-model style pretraining.")
 flags.DEFINE_boolean("pretraining_d", False,          #
                    "Train D during pretraining.")
-flags.DEFINE_boolean("conv_d", False,                 #
-                   "Convnet for D.")
 flags.DEFINE_boolean("initialize_d", False,           #
                    "Initialize variables for D, no matter if there are trained versions in checkpoint.")
 flags.DEFINE_boolean("ignore_saved_args", False,      #
@@ -115,10 +117,8 @@ flags.DEFINE_boolean("pace_events", False,            #
                    "When parsing input data, insert one dummy event at each quarter note if there is no tone.")
 flags.DEFINE_boolean("minibatch_d", False,            #
                    "Adding kernel features for minibatch diversity.")
-flags.DEFINE_boolean("bidirectional_d", False,        #
-                   "Bidirectional RNN for D.")
-flags.DEFINE_boolean("mean_d", False,                 #
-                   "RNN with reduce_mean() for D.")
+flags.DEFINE_boolean("unidirectional_d", False,        #
+                   "Unidirectional RNN instead of bidirectional RNN for D.")
 flags.DEFINE_boolean("profiling", False,              #
                    "Profiling. Writing a timeline.json file in plots dir.")
 flags.DEFINE_boolean("float16", False,                #
@@ -128,7 +128,7 @@ flags.DEFINE_boolean("adam", False,                   #
                    "Use Adam optimizer.")
 flags.DEFINE_boolean("feature_matching", False,       #
                    "Feature matching objective for G.")
-flags.DEFINE_boolean("l2_regularizer", False,       #
+flags.DEFINE_boolean("disable_l2_regularizer", False,       #
                    "L2 regularization on weights.")
 flags.DEFINE_float("reg_scale", 1.0,       #
                    "L2 regularization scale.")
@@ -137,10 +137,14 @@ flags.DEFINE_boolean("synthetic_chords", False,       #
 flags.DEFINE_integer("tones_per_cell", 1,             # 2,3
                    "Maximum number of tones to output per RNN cell.")
 flags.DEFINE_string("composer", None, "Specify exactly one composer, and train model only on this.")
+flags.DEFINE_boolean("generate_meta", False, "Generate the composer and genre as part of output.")
+flags.DEFINE_float("random_input_scale", 1.0,       #
+                   "Scale of random inputs (1.0=same size as generated features).")
+flags.DEFINE_boolean("end_classification", False, "Classify only in ends of D. Otherwise, does classification at every timestep and mean reduce.")
 
 FLAGS = flags.FLAGS
 
-model_layout_flags = ['num_layers', 'meta_layer_size', 'hidden_size', 'biscale_slow_layer_ticks', 'multiscale', 'multiscale', 'feed_previous', 'pace_events', 'minibatch_d', 'bidirectional_d', 'feature_matching', 'composer']
+model_layout_flags = ['num_layers_g', 'num_layers_d', 'meta_layer_size', 'hidden_size_g', 'hidden_size_d', 'biscale_slow_layer_ticks', 'multiscale', 'multiscale', 'disable_feed_previous', 'pace_events', 'minibatch_d', 'unidirectional_d', 'feature_matching', 'composer']
 
 
 def restore_flags(save_if_none_found=True):
@@ -228,7 +232,6 @@ class RNNGAN(object):
   def __init__(self, is_training, num_song_features=None, num_meta_features=None):
     self.batch_size = batch_size = FLAGS.batch_size
     self.songlength = songlength = FLAGS.songlength
-    size                         = FLAGS.hidden_size
     #self.global_step            = tf.Variable(0, trainable=False)
 
     print('songlength: {}'.format(self.songlength))
@@ -240,23 +243,24 @@ class RNNGAN(object):
     
     with tf.variable_scope('G') as scope:
       scope.set_regularizer(tf.contrib.layers.l2_regularizer(scale=FLAGS.reg_scale))
-      lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=1.0, state_is_tuple=True)
+      lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size_g, forget_bias=1.0, state_is_tuple=True)
       if is_training and FLAGS.keep_prob < 1:
         lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
             lstm_cell, output_keep_prob=FLAGS.keep_prob)
-      cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers, state_is_tuple=True)
+      cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers_g, state_is_tuple=True)
 
       self._initial_state = cell.zero_state(batch_size, data_type())
 
       # TODO: (possibly temporarily) disabling meta info
-      #metainputs = tf.random_uniform(shape=[batch_size, num_meta_features], minval=0.0, maxval=1.0)
-      #meta_g = tf.nn.relu(linear(metainputs, FLAGS.meta_layer_size, scope='meta_layer', reuse_scope=False))
-      #meta_softmax_w = tf.get_variable("meta_softmax_w", [FLAGS.meta_layer_size, num_meta_features])
-      #meta_softmax_b = tf.get_variable("meta_softmax_b", [num_meta_features])
-      #meta_logits = tf.nn.xw_plus_b(meta_g, meta_softmax_w, meta_softmax_b)
-      #meta_probs = tf.nn.softmax(meta_logits)
+      if FLAGS.generate_meta:
+        metainputs = tf.random_uniform(shape=[batch_size, int(FLAGS.random_input_scale*num_meta_features)], minval=0.0, maxval=1.0)
+        meta_g = tf.nn.relu(linear(metainputs, FLAGS.meta_layer_size, scope='meta_layer', reuse_scope=False))
+        meta_softmax_w = tf.get_variable("meta_softmax_w", [FLAGS.meta_layer_size, num_meta_features])
+        meta_softmax_b = tf.get_variable("meta_softmax_b", [num_meta_features])
+        meta_logits = tf.nn.xw_plus_b(meta_g, meta_softmax_w, meta_softmax_b)
+        meta_probs = tf.nn.softmax(meta_logits)
 
-      random_rnninputs = tf.random_uniform(shape=[batch_size, songlength, num_song_features], minval=0.0, maxval=1.0, dtype=data_type())
+      random_rnninputs = tf.random_uniform(shape=[batch_size, songlength, int(FLAGS.random_input_scale*num_song_features)], minval=0.0, maxval=1.0, dtype=data_type())
 
       # Make list of tensors. One per step in recurrence.
       # Each tensor is batchsize*numfeatures.
@@ -270,9 +274,15 @@ class RNNGAN(object):
       self._generated_features = []
       for i,input_ in enumerate(random_rnninputs):
         if i > 0: scope.reuse_variables()
-        if FLAGS.feed_previous:
-          input_ = tf.concat(concat_dim=1, values=[input_, generated_point])
-        input_ = tf.nn.relu(linear(input_, size, scope='input_layer', reuse_scope=(i!=0)))
+        concat_values = [input_]
+        if not FLAGS.disable_feed_previous:
+          concat_values.append(generated_point)
+        if FLAGS.generate_meta:
+          concat_values.append(meta_probs)
+        if len(concat_values):
+          input_ = tf.concat(concat_dim=1, values=concat_values)
+        input_ = tf.nn.relu(linear(input_, FLAGS.hidden_size_g,
+                            scope='input_layer', reuse_scope=(i!=0)))
         output, state = cell(input_, state)
         outputs.append(output)
         #generated_point = tf.nn.relu(linear(output, num_song_features, scope='output_layer', reuse_scope=(i!=0)))
@@ -287,9 +297,14 @@ class RNNGAN(object):
       outputs = []
       self._generated_features_pretraining = []
       for i,input_ in enumerate(random_rnninputs):
-        if FLAGS.feed_previous:
-          input_ = tf.concat(concat_dim=1, values=[input_, prev_target])
-        input_ = tf.nn.relu(linear(input_, size, scope='input_layer', reuse_scope=(i!=0)))
+        concat_values = [input_]
+        if not FLAGS.disable_feed_previous:
+          concat_values.append(prev_target)
+        if FLAGS.generate_meta:
+          concat_values.append(self._input_metadata)
+        if len(concat_values):
+          input_ = tf.concat(concat_dim=1, values=concat_values)
+        input_ = tf.nn.relu(linear(input_, FLAGS.hidden_size_g, scope='input_layer', reuse_scope=(i!=0)))
         output, state = cell(input_, state)
         outputs.append(output)
         #generated_point = tf.nn.relu(linear(output, num_song_features, scope='output_layer', reuse_scope=(i!=0)))
@@ -316,7 +331,7 @@ class RNNGAN(object):
     reg_loss = reg_constant * sum(reg_losses)
     reg_loss = tf.Print(reg_loss, reg_losses,
                   'reg_losses = ', summarize=20, first_n=20)
-    #if FLAGS.l2_regularizer:
+    #if not FLAGS.disable_l2_regularizer:
     #  print('L2 regularization. Reg losses: {}'.format([v.name for v in reg_losses]))
    
     # ---BEGIN, PRETRAINING. ---
@@ -324,7 +339,7 @@ class RNNGAN(object):
     print(tf.transpose(tf.pack(self._generated_features_pretraining), perm=[1, 0, 2]).get_shape())
     print(self._input_songdata.get_shape())
     self.rnn_pretraining_loss = tf.reduce_mean(tf.squared_difference(x=tf.transpose(tf.pack(self._generated_features_pretraining), perm=[1, 0, 2]), y=self._input_songdata))
-    if FLAGS.l2_regularizer:
+    if not FLAGS.disable_l2_regularizer:
       self.rnn_pretraining_loss = self.rnn_pretraining_loss+reg_loss
     
     
@@ -346,14 +361,17 @@ class RNNGAN(object):
       print('self._input_songdata shape {}'.format(self._input_songdata.get_shape()))
       print('generated data shape {}'.format(self._generated_features[0].get_shape()))
       # TODO: (possibly temporarily) disabling meta info
-      #songdata_inputs = [tf.concat(1, [self._input_metadata, songdata_input]) for songdata_input in songdata_inputs]
+      if FLAGS.generate_meta:
+        songdata_inputs = [tf.concat(1, [self._input_metadata, songdata_input]) for songdata_input in songdata_inputs]
       #print('metadata inputs shape {}'.format(self._input_metadata.get_shape()))
       #print('generated metadata shape {}'.format(meta_probs.get_shape()))
       self.real_d,self.real_d_features = self.discriminator(songdata_inputs, is_training, msg='real')
       scope.reuse_variables()
       # TODO: (possibly temporarily) disabling meta info
-      #generated_data = [tf.concat(1, [meta_probs, songdata_input]) for songdata_input in self._generated_features]
-      generated_data = self._generated_features
+      if FLAGS.generate_meta:
+        generated_data = [tf.concat(1, [meta_probs, songdata_input]) for songdata_input in self._generated_features]
+      else:
+        generated_data = self._generated_features
       if songdata_inputs[0].get_shape() != generated_data[0].get_shape():
         print('songdata_inputs shape {} != generated data shape {}'.format(songdata_inputs[0].get_shape(), generated_data[0].get_shape()))
       self.generated_d,self.generated_d_features = self.discriminator(generated_data, is_training, msg='generated')
@@ -365,7 +383,7 @@ class RNNGAN(object):
     self.g_loss_feature_matching = tf.reduce_sum(tf.squared_difference(self.real_d_features, self.generated_d_features))
     self.g_loss = tf.reduce_mean(-tf.log(tf.clip_by_value(self.generated_d, 1e-1000000, 1.0)))
 
-    if FLAGS.l2_regularizer:
+    if not FLAGS.disable_l2_regularizer:
       self.d_loss = self.d_loss+reg_loss
       self.g_loss_feature_matching = self.g_loss_feature_matching+reg_loss
       self.g_loss = self.g_loss+reg_loss
@@ -391,111 +409,54 @@ class RNNGAN(object):
     self._lr_update = tf.assign(self._lr, self._new_lr)
 
   def discriminator(self, inputs, is_training, msg=''):
-    if FLAGS.conv_d:
-      inputs_concatenated = tf.pack(inputs, axis=1)
-      num_convfilters = 20
-      filterwidth = 5
-      input_shape = inputs_concatenated.get_shape()
-      num_song_features = input_shape[2]
-      conv_activations = []
-        
-      w = tf.get_variable('conv_w', [filterwidth, num_song_features, 1, num_convfilters],
-                          initializer=tf.random_normal_initializer(stddev=1.0))
-      b = tf.get_variable('conv_b', [num_convfilters],
-                          initializer=tf.random_normal_initializer(stddev=1.0))
-      # conv2d expects four dimensions: [batch, width, height, channel]
-      # Let's add a dummy channel dim:
-      inputs_concatenated = tf.expand_dims(inputs_concatenated, -1)
-      inputs_concatenated = tf.pad(inputs_concatenated, [[0,0],[2,2],[0,0],[0,0]], 'CONSTANT')
-      print('inputs_concatenated, padded: shape {}'.format(inputs_concatenated.get_shape()))
-      conv_activation = tf.nn.conv2d(inputs_concatenated, w, strides=[1, 1, 1, 1], padding='VALID')
-      print('conv_activation: shape {}'.format(conv_activation.get_shape()))
-      pooled_activation = tf.nn.max_pool(conv_activation, ksize=[1,4,1,1], strides=[1,2,1,1], padding='VALID')
-      print('pooled_activation: shape {}'.format(pooled_activation.get_shape()))
-      
-      decision = tf.sigmoid(linear(tf.reshape(pooled_activation, shape=[self.batch_size, -1]), 1, 'decision', reuse_scope=False))
-      print('decision: shape {}'.format(decision.get_shape()))
-      decision = tf.Print(decision, [decision],
-              '{} decision = '.format(msg), summarize=20, first_n=20)
-      return (decision,pooled_activation)
-
-      #elif FLAGS.mean_d:
-      #  lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size, forget_bias=1.0, state_is_tuple=True)
-      #  if is_training and FLAGS.keep_prob < 1:
-      #    lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
-      #        lstm_cell, output_keep_prob=FLAGS.keep_prob)
-      #  cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers, state_is_tuple=True)
-      #  self._initial_state = cell.zero_state(self.batch_size, data_type())
-      #  if is_training and FLAGS.keep_prob < 1:
-      #    inputs = [tf.nn.dropout(inp, FLAGS.keep_prob) for inp in inputs]
-      #  outputs, state = tf.nn.rnn(cell, inputs, initial_state=self._initial_state)
-
-      #  if FLAGS.minibatch_d:
-      #    outputs = [minibatch(tf.reshape(outp, shape=[FLAGS.batch_size, -1]), msg=msg, reuse_scope=(i!=0)) for i,outp in enumerate(outputs)]
-      #  # decision = tf.sigmoid(linear(outputs[-1], 1, 'decision'))
-      #  decisions = [tf.sigmoid(linear(output, 1, 'decision', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
-      #  decisions = tf.pack(decisions)
-      #  print('shape, decisions: {}'.format(decisions.get_shape()))
-      #  decision = tf.reduce_mean(decisions, reduction_indices=[0,2])
-      #  decision = tf.Print(decision, [decision],
-      #          '{} decision = '.format(msg), summarize=20, first_n=20)
-      #  return decision
-    else:
-      # RNN:
-      #for i in xrange(len(inputs)):
-      #  print('shape inputs[{}] {}'.format(i, inputs[i].get_shape()))
-      #inputs[0] = tf.Print(inputs[0], [inputs[0]],
-      #        '{} inputs[0] = '.format(msg), summarize=20, first_n=20)
-      if is_training and FLAGS.keep_prob < 1:
-        inputs = [tf.nn.dropout(inp, FLAGS.keep_prob) for inp in inputs]
-      lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size, forget_bias=1.0, state_is_tuple=True)
+    # RNN discriminator:
+    #for i in xrange(len(inputs)):
+    #  print('shape inputs[{}] {}'.format(i, inputs[i].get_shape()))
+    #inputs[0] = tf.Print(inputs[0], [inputs[0]],
+    #        '{} inputs[0] = '.format(msg), summarize=20, first_n=20)
+    if is_training and FLAGS.keep_prob < 1:
+      inputs = [tf.nn.dropout(inp, FLAGS.keep_prob) for inp in inputs]
+    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size_d, forget_bias=1.0, state_is_tuple=True)
+    if is_training and FLAGS.keep_prob < 1:
+      lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
+          lstm_cell, output_keep_prob=FLAGS.keep_prob)
+    cell_fw = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers_d, state_is_tuple=True)
+    self._initial_state_fw = cell_fw.zero_state(self.batch_size, data_type())
+    if not FLAGS.unidirectional_d:
+      lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size_g, forget_bias=1.0, state_is_tuple=True)
       if is_training and FLAGS.keep_prob < 1:
         lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
             lstm_cell, output_keep_prob=FLAGS.keep_prob)
-      cell_fw = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers, state_is_tuple=True)
-      self._initial_state_fw = cell_fw.zero_state(self.batch_size, data_type())
-      if FLAGS.bidirectional_d:
-        lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size, forget_bias=1.0, state_is_tuple=True)
-        if is_training and FLAGS.keep_prob < 1:
-          lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
-              lstm_cell, output_keep_prob=FLAGS.keep_prob)
-        cell_bw = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers, state_is_tuple=True)
-        self._initial_state_bw = cell_bw.zero_state(self.batch_size, data_type())
-        
-        outputs, state_fw, state_bw = tf.nn.bidirectional_rnn(cell_fw, cell_bw, inputs, initial_state_fw=self._initial_state_fw, initial_state_bw=self._initial_state_bw)
-        #outputs[0] = tf.Print(outputs[0], [outputs[0]],
-        #        '{} outputs[0] = '.format(msg), summarize=20, first_n=20)
-        #state = tf.concat(state_fw, state_bw)
-        #endoutput = tf.concat(concat_dim=1, values=[outputs[0],outputs[-1]])
-      else:
-        outputs, state = tf.nn.rnn(cell_fw, inputs, initial_state=self._initial_state_fw)
-        #endoutput = outputs[-1]
+      cell_bw = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers_d, state_is_tuple=True)
+      self._initial_state_bw = cell_bw.zero_state(self.batch_size, data_type())
+      
+      outputs, state_fw, state_bw = tf.nn.bidirectional_rnn(cell_fw, cell_bw, inputs, initial_state_fw=self._initial_state_fw, initial_state_bw=self._initial_state_bw)
+      #outputs[0] = tf.Print(outputs[0], [outputs[0]],
+      #        '{} outputs[0] = '.format(msg), summarize=20, first_n=20)
+      #state = tf.concat(state_fw, state_bw)
+      #endoutput = tf.concat(concat_dim=1, values=[outputs[0],outputs[-1]])
+    else:
+      outputs, state = tf.nn.rnn(cell_fw, inputs, initial_state=self._initial_state_fw)
+      #endoutput = outputs[-1]
 
-      if FLAGS.minibatch_d:
-        outputs = [minibatch(tf.reshape(outp, shape=[FLAGS.batch_size, -1]), msg=msg, reuse_scope=(i!=0)) for i,outp in enumerate(outputs)]
-      # decision = tf.sigmoid(linear(outputs[-1], 1, 'decision'))
+    if FLAGS.minibatch_d:
+      outputs = [minibatch(tf.reshape(outp, shape=[FLAGS.batch_size, -1]), msg=msg, reuse_scope=(i!=0)) for i,outp in enumerate(outputs)]
+    # decision = tf.sigmoid(linear(outputs[-1], 1, 'decision'))
+    if FLAGS.end_classification:
+      decisions = [tf.sigmoid(linear(output, 1, 'decision', reuse_scope=(i!=0))) for i,output in enumerate([outputs[0], outputs[-1]])]
+      decisions = tf.pack(decisions)
+      decisions = tf.transpose(decisions, perm=[1,0,2])
+      print('shape, decisions: {}'.format(decisions.get_shape()))
+    else:
       decisions = [tf.sigmoid(linear(output, 1, 'decision', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
       decisions = tf.pack(decisions)
       decisions = tf.transpose(decisions, perm=[1,0,2])
       print('shape, decisions: {}'.format(decisions.get_shape()))
-      decision = tf.reduce_mean(decisions, reduction_indices=[1,2])
-      decision = tf.Print(decision, [decision],
-              '{} decision = '.format(msg), summarize=20, first_n=20)
-      return (decision,tf.transpose(tf.pack(outputs), perm=[1,0,2]))
+    decision = tf.reduce_mean(decisions, reduction_indices=[1,2])
+    decision = tf.Print(decision, [decision],
+            '{} decision = '.format(msg), summarize=20, first_n=20)
+    return (decision,tf.transpose(tf.pack(outputs), perm=[1,0,2]))
       
-      #print('shape endoutput {}'.format(endoutput.get_shape()))
-      # decision = tf.sigmoid(linear(outputs[-1], 1, 'decision'))
-
-      #print('shape outputs[0] {}'.format(outputs[0].get_shape()))
-      #outputs = tf.pack(outputs, axis=2)
-      #print('shape outputs {}'.format(outputs.get_shape()))
-      #if FLAGS.minibatch_d:
-      #  endoutput = minibatch(tf.reshape(endoutput, shape=[FLAGS.batch_size, -1]), msg=msg)
-      #  print('shape endoutput {}'.format(endoutput.get_shape()))
-      #decision = tf.sigmoid(linear(endoutput, 1, 'decision'))
-      #decision = tf.Print(decision, [decision],
-      #        '{} decision = '.format(msg), summarize=20, first_n=20)
-      #return decision
 
   
   def assign_lr(self, session, lr_value):
@@ -567,17 +528,17 @@ def run_epoch(session, model, loader, datasetlabel, eval_op_g, eval_op_d, pretra
         #saver.save(session, checkpoint_path, global_step=m.global_step)
         #break
       elif d_loss == 0.0:
-        print('D train loss is zero. Freezing optimization. G loss: {:.3f}'.format(g_loss))
+        #print('D train loss is zero. Freezing optimization. G loss: {:.3f}'.format(g_loss))
         op_g = tf.no_op()
       elif g_loss == 0.0: 
-        print('G train loss is zero. Freezing optimization. D loss: {:.3f}'.format(d_loss))
+        #print('G train loss is zero. Freezing optimization. D loss: {:.3f}'.format(d_loss))
         op_d = tf.no_op()
       elif g_loss < 2.0 or d_loss < 2.0:
         if g_loss*.7 > d_loss:
-          print('G train loss is {:.3f}, D train loss is {:.3f}. Freezing optimization of D'.format(g_loss, d_loss))
+          #print('G train loss is {:.3f}, D train loss is {:.3f}. Freezing optimization of D'.format(g_loss, d_loss))
           op_g = tf.no_op()
-        elif d_loss*.7 > g_loss:
-          print('G train loss is {:.3f}, D train loss is {:.3f}. Freezing optimization of G'.format(g_loss, d_loss))
+        #elif d_loss*.7 > g_loss:
+          #print('G train loss is {:.3f}, D train loss is {:.3f}. Freezing optimization of G'.format(g_loss, d_loss))
         op_d = tf.no_op()
     #fetches = [model.cost, model.final_state, eval_op]
     if pretraining:
