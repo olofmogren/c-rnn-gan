@@ -43,6 +43,7 @@ from subprocess import call, Popen
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.contrib import rnn
 from tensorflow.python.client import timeline
 
 
@@ -224,12 +225,12 @@ def minibatch(inp, num_kernels=25, kernel_dim=10, scope=None, msg='', reuse_scop
     minibatch_features = tf.reduce_sum(tf.exp(-abs_diffs), 2)
     minibatch_features = tf.Print(minibatch_features, [tf.reduce_min(minibatch_features), tf.reduce_max(minibatch_features)],
             '{} minibatch_features (min,max) = '.format(msg), summarize=20, first_n=20)
-  return tf.concat(1, [inp, minibatch_features])
+  return tf.concat(axis=1, values=[inp, minibatch_features])
 
 class RNNGAN(object):
   """The RNNGAN model."""
 
-  def __init__(self, is_training, num_song_features=None, num_meta_features=None):
+  def __init__(self, is_training, num_song_features=None, num_meta_features=None, reuse_rnn_cells=False):
     self.batch_size = batch_size = FLAGS.batch_size
     self.songlength = songlength = FLAGS.songlength
     #self.global_step            = tf.Variable(0, trainable=False)
@@ -239,15 +240,28 @@ class RNNGAN(object):
     self._input_metadata = tf.placeholder(shape=[batch_size, num_meta_features], dtype=data_type())
 
     songdata_inputs = [tf.squeeze(input_, [1])
-              for input_ in tf.split(1, songlength, self._input_songdata)]
+              for input_ in tf.split(axis=1, num_or_size_splits=songlength, value=self._input_songdata)]
     
     with tf.variable_scope('G') as scope:
       scope.set_regularizer(tf.contrib.layers.l2_regularizer(scale=FLAGS.reg_scale))
-      lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size_g, forget_bias=1.0, state_is_tuple=True)
       if is_training and FLAGS.keep_prob < 1:
-        lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
-            lstm_cell, output_keep_prob=FLAGS.keep_prob)
-      cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers_g, state_is_tuple=True)
+        cell = rnn.MultiRNNCell([rnn.DropoutWrapper(rnn.BasicLSTMCell(FLAGS.hidden_size_g,
+                                                                      forget_bias=1.0,
+                                                                      state_is_tuple=True,
+                                                                      reuse=reuse_rnn_cells),
+                                                    output_keep_prob=FLAGS.keep_prob)
+                                 for _ in xrange(FLAGS.num_layers_g)],
+                                state_is_tuple=True)
+      else:
+        cell = rnn.MultiRNNCell([rnn.BasicLSTMCell(FLAGS.hidden_size_g,
+                                                   forget_bias=1.0,
+                                                   state_is_tuple=True,
+                                                   reuse=reuse_rnn_cells) for _ in xrange(FLAGS.num_layers_g)],
+                                state_is_tuple=True)
+      #cell = rnn.BasicLSTMCell(FLAGS.hidden_size_g,
+      #                                             forget_bias=1.0,
+      #                                             state_is_tuple=True,
+      #                                             reuse=reuse_rnn_cells)
 
       self._initial_state = cell.zero_state(batch_size, data_type())
 
@@ -264,7 +278,7 @@ class RNNGAN(object):
 
       # Make list of tensors. One per step in recurrence.
       # Each tensor is batchsize*numfeatures.
-      random_rnninputs = [tf.squeeze(input_, [1]) for input_ in tf.split(1, songlength, random_rnninputs)]
+      random_rnninputs = [tf.squeeze(input_, [1]) for input_ in tf.split(axis=1, num_or_size_splits=songlength, value=random_rnninputs)]
       
       # REAL GENERATOR:
       state = self._initial_state
@@ -280,7 +294,7 @@ class RNNGAN(object):
         if FLAGS.generate_meta:
           concat_values.append(meta_probs)
         if len(concat_values):
-          input_ = tf.concat(concat_dim=1, values=concat_values)
+          input_ = tf.concat(axis=1, values=concat_values)
         input_ = tf.nn.relu(linear(input_, FLAGS.hidden_size_g,
                             scope='input_layer', reuse_scope=(i!=0)))
         output, state = cell(input_, state)
@@ -303,7 +317,7 @@ class RNNGAN(object):
         if FLAGS.generate_meta:
           concat_values.append(self._input_metadata)
         if len(concat_values):
-          input_ = tf.concat(concat_dim=1, values=concat_values)
+          input_ = tf.concat(axis=1, values=concat_values)
         input_ = tf.nn.relu(linear(input_, FLAGS.hidden_size_g, scope='input_layer', reuse_scope=(i!=0)))
         output, state = cell(input_, state)
         outputs.append(output)
@@ -312,7 +326,7 @@ class RNNGAN(object):
         self._generated_features_pretraining.append(generated_point)
         prev_target = songdata_inputs[i]
       
-      #outputs, state = tf.nn.rnn(cell, transformed, initial_state=self._initial_state)
+      #outputs, state = rnn.static_rnn(cell, transformed, initial_state=self._initial_state)
 
       #self._generated_features = [tf.nn.relu(linear(output, num_song_features, scope='output_layer', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
 
@@ -336,9 +350,9 @@ class RNNGAN(object):
    
     # ---BEGIN, PRETRAINING. ---
     
-    print(tf.transpose(tf.pack(self._generated_features_pretraining), perm=[1, 0, 2]).get_shape())
+    print(tf.transpose(tf.stack(self._generated_features_pretraining), perm=[1, 0, 2]).get_shape())
     print(self._input_songdata.get_shape())
-    self.rnn_pretraining_loss = tf.reduce_mean(tf.squared_difference(x=tf.transpose(tf.pack(self._generated_features_pretraining), perm=[1, 0, 2]), y=self._input_songdata))
+    self.rnn_pretraining_loss = tf.reduce_mean(tf.squared_difference(x=tf.transpose(tf.stack(self._generated_features_pretraining), perm=[1, 0, 2]), y=self._input_songdata))
     if not FLAGS.disable_l2_regularizer:
       self.rnn_pretraining_loss = self.rnn_pretraining_loss+reg_loss
     
@@ -362,26 +376,28 @@ class RNNGAN(object):
       print('generated data shape {}'.format(self._generated_features[0].get_shape()))
       # TODO: (possibly temporarily) disabling meta info
       if FLAGS.generate_meta:
-        songdata_inputs = [tf.concat(1, [self._input_metadata, songdata_input]) for songdata_input in songdata_inputs]
+        songdata_inputs = [tf.concat(axis=1, values=[self._input_metadata, songdata_input]) for songdata_input in songdata_inputs]
       #print('metadata inputs shape {}'.format(self._input_metadata.get_shape()))
       #print('generated metadata shape {}'.format(meta_probs.get_shape()))
-      self.real_d,self.real_d_features = self.discriminator(songdata_inputs, is_training, msg='real')
+      self.real_d,self.real_d_features = self.discriminator(songdata_inputs, is_training, msg='real', reuse_rnn_cells=reuse_rnn_cells)
       scope.reuse_variables()
       # TODO: (possibly temporarily) disabling meta info
       if FLAGS.generate_meta:
-        generated_data = [tf.concat(1, [meta_probs, songdata_input]) for songdata_input in self._generated_features]
+        generated_data = [tf.concat(axis=1, values=[meta_probs, songdata_input]) for songdata_input in self._generated_features]
       else:
         generated_data = self._generated_features
       if songdata_inputs[0].get_shape() != generated_data[0].get_shape():
         print('songdata_inputs shape {} != generated data shape {}'.format(songdata_inputs[0].get_shape(), generated_data[0].get_shape()))
-      self.generated_d,self.generated_d_features = self.discriminator(generated_data, is_training, msg='generated')
+      self.generated_d,self.generated_d_features = self.discriminator(generated_data, is_training, msg='generated', reuse_rnn_cells=reuse_rnn_cells)
 
     # Define the loss for discriminator and generator networks (see the original
     # paper for details), and create optimizers for both
-    self.d_loss = tf.reduce_mean(-tf.log(tf.clip_by_value(self.real_d, 1e-1000000, 1.0)) \
-                                 -tf.log(1 - tf.clip_by_value(self.generated_d, 0.0, 1.0-1e-1000000)))
+    #self.d_loss = tf.reduce_mean(-tf.log(tf.clip_by_value(self.real_d, 1e-1000000, 1.0)) \
+    #                             -tf.log(1 - tf.clip_by_value(self.generated_d, 0.0, 1.0-1e-1000000)))
+    self.d_loss = tf.reduce_mean(self.generated_d-self.real_d)
     self.g_loss_feature_matching = tf.reduce_sum(tf.squared_difference(self.real_d_features, self.generated_d_features))
-    self.g_loss = tf.reduce_mean(-tf.log(tf.clip_by_value(self.generated_d, 1e-1000000, 1.0)))
+    #self.g_loss = tf.reduce_mean(-tf.log(tf.clip_by_value(self.generated_d, 1e-1000000, 1.0)))
+    self.g_loss = tf.reduce_mean(-self.generated_d)
 
     if not FLAGS.disable_l2_regularizer:
       self.d_loss = self.d_loss+reg_loss
@@ -408,7 +424,7 @@ class RNNGAN(object):
     self._new_lr = tf.placeholder(shape=[], name="new_learning_rate", dtype=data_type())
     self._lr_update = tf.assign(self._lr, self._new_lr)
 
-  def discriminator(self, inputs, is_training, msg=''):
+  def discriminator(self, inputs, is_training, msg='', reuse_rnn_cells=False):
     # RNN discriminator:
     #for i in xrange(len(inputs)):
     #  print('shape inputs[{}] {}'.format(i, inputs[i].get_shape()))
@@ -416,27 +432,56 @@ class RNNGAN(object):
     #        '{} inputs[0] = '.format(msg), summarize=20, first_n=20)
     if is_training and FLAGS.keep_prob < 1:
       inputs = [tf.nn.dropout(inp, FLAGS.keep_prob) for inp in inputs]
-    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size_d, forget_bias=1.0, state_is_tuple=True)
-    if is_training and FLAGS.keep_prob < 1:
-      lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
-          lstm_cell, output_keep_prob=FLAGS.keep_prob)
-    cell_fw = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers_d, state_is_tuple=True)
+    with tf.variable_scope('fw') as scope:
+      scope.set_regularizer(tf.contrib.layers.l2_regularizer(scale=FLAGS.reg_scale))
+      if is_training and FLAGS.keep_prob < 1:
+        cell_fw = rnn.MultiRNNCell([rnn.DropoutWrapper(rnn.BasicLSTMCell(FLAGS.hidden_size_d,
+                                                                         forget_bias=1.0,
+                                                                         state_is_tuple=True,
+                                                                         reuse=reuse_rnn_cells),
+                                                       output_keep_prob=FLAGS.keep_prob) for _ in xrange(FLAGS.num_layers_d)],
+                                   state_is_tuple=True)
+      else:
+        cell_fw = rnn.MultiRNNCell([rnn.BasicLSTMCell(FLAGS.hidden_size_d,
+                                                      forget_bias=1.0,
+                                                      state_is_tuple=True,
+                                                      reuse=reuse_rnn_cells) for _ in xrange(FLAGS.num_layers_d)],
+                                   state_is_tuple=True)
+      #cell_fw = rnn.BasicLSTMCell(FLAGS.hidden_size_d,
+      #                                                forget_bias=1.0,
+      #                                                state_is_tuple=True,
+      #                                                reuse=reuse_rnn_cells)
+    
     self._initial_state_fw = cell_fw.zero_state(self.batch_size, data_type())
     if not FLAGS.unidirectional_d:
-      lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.hidden_size_g, forget_bias=1.0, state_is_tuple=True)
-      if is_training and FLAGS.keep_prob < 1:
-        lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
-            lstm_cell, output_keep_prob=FLAGS.keep_prob)
-      cell_bw = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * FLAGS.num_layers_d, state_is_tuple=True)
-      self._initial_state_bw = cell_bw.zero_state(self.batch_size, data_type())
+      print('not unidirectional.')
+      with tf.variable_scope('bw') as scope:
+        scope.set_regularizer(tf.contrib.layers.l2_regularizer(scale=FLAGS.reg_scale))
+        #scope.reuse_variables(None)
+        if is_training and FLAGS.keep_prob < 1:
+          cell_bw = rnn.MultiRNNCell([rnn.DropoutWrapper(rnn.BasicLSTMCell(FLAGS.hidden_size_d,
+                                                                           forget_bias=1.0,
+                                                                           state_is_tuple=True,
+                                                                           reuse=reuse_rnn_cells),
+                                                         output_keep_prob=FLAGS.keep_prob) for _ in xrange(FLAGS.num_layers_d)],
+                                     state_is_tuple=True)
+        else:
+          cell_bw = rnn.MultiRNNCell([rnn.BasicLSTMCell(FLAGS.hidden_size_d,
+                                                        forget_bias=1.0,
+                                                        state_is_tuple=True,
+                                                        reuse=reuse_rnn_cells) for _ in xrange(FLAGS.num_layers_d)],
+                                     state_is_tuple=True)
+        self._initial_state_bw = cell_bw.zero_state(self.batch_size, data_type())
       
-      outputs, state_fw, state_bw = tf.nn.bidirectional_rnn(cell_fw, cell_bw, inputs, initial_state_fw=self._initial_state_fw, initial_state_bw=self._initial_state_bw)
+      outputs, state_fw, state_bw = rnn.static_bidirectional_rnn(cell_fw, cell_bw, inputs, initial_state_fw=self._initial_state_fw, initial_state_bw=self._initial_state_bw)
       #outputs[0] = tf.Print(outputs[0], [outputs[0]],
       #        '{} outputs[0] = '.format(msg), summarize=20, first_n=20)
       #state = tf.concat(state_fw, state_bw)
-      #endoutput = tf.concat(concat_dim=1, values=[outputs[0],outputs[-1]])
+      #endoutput = tf.concat(axis=1, values=[outputs[0],outputs[-1]])
     else:
-      outputs, state = tf.nn.rnn(cell_fw, inputs, initial_state=self._initial_state_fw)
+      with tf.variable_scope('uni') as scope:
+        scope.set_regularizer(tf.contrib.layers.l2_regularizer(scale=FLAGS.reg_scale))
+        outputs, state = rnn.static_rnn(cell_fw, inputs, initial_state=self._initial_state_fw)
       #endoutput = outputs[-1]
 
     if FLAGS.minibatch_d:
@@ -444,18 +489,18 @@ class RNNGAN(object):
     # decision = tf.sigmoid(linear(outputs[-1], 1, 'decision'))
     if FLAGS.end_classification:
       decisions = [tf.sigmoid(linear(output, 1, 'decision', reuse_scope=(i!=0))) for i,output in enumerate([outputs[0], outputs[-1]])]
-      decisions = tf.pack(decisions)
+      decisions = tf.stack(decisions)
       decisions = tf.transpose(decisions, perm=[1,0,2])
       print('shape, decisions: {}'.format(decisions.get_shape()))
     else:
       decisions = [tf.sigmoid(linear(output, 1, 'decision', reuse_scope=(i!=0))) for i,output in enumerate(outputs)]
-      decisions = tf.pack(decisions)
+      decisions = tf.stack(decisions)
       decisions = tf.transpose(decisions, perm=[1,0,2])
       print('shape, decisions: {}'.format(decisions.get_shape()))
     decision = tf.reduce_mean(decisions, reduction_indices=[1,2])
     decision = tf.Print(decision, [decision],
             '{} decision = '.format(msg), summarize=20, first_n=20)
-    return (decision,tf.transpose(tf.pack(outputs), perm=[1,0,2]))
+    return (decision,tf.transpose(tf.stack(outputs), perm=[1,0,2]))
       
 
   
@@ -680,7 +725,7 @@ def main(_):
   with tf.Graph().as_default(), tf.Session(config=tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)) as session:
     with tf.variable_scope("model", reuse=None) as scope:
       scope.set_regularizer(tf.contrib.layers.l2_regularizer(scale=FLAGS.reg_scale))
-      m = RNNGAN(is_training=True, num_song_features=num_song_features, num_meta_features=num_meta_features)
+      m = RNNGAN(is_training=True, num_song_features=num_song_features, num_meta_features=num_meta_features, reuse_rnn_cells=False)
 
 
     if FLAGS.initialize_d:
@@ -697,17 +742,17 @@ def main(_):
         session.run(tf.initialize_variables([v for v in tf.trainable_variables() if v.name.startswith('model/D/')]))
       else:
         print("Created model with fresh parameters.")
-        session.run(tf.initialize_all_variables())
-      saver = tf.train.Saver(tf.all_variables())
+        session.run(tf.global_variables_initializer())
+      saver = tf.train.Saver(tf.global_variables())
     else:
-      saver = tf.train.Saver(tf.all_variables())
+      saver = tf.train.Saver(tf.global_variables())
       ckpt = tf.train.get_checkpoint_state(FLAGS.traindir)
       if ckpt and tf.gfile.Exists(ckpt.model_checkpoint_path):
         print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
         saver.restore(session, ckpt.model_checkpoint_path)
       else:
         print("Created model with fresh parameters.")
-        session.run(tf.initialize_all_variables())
+        session.run(tf.global_variables_initializer())
 
     run_metadata = None
     if FLAGS.profiling:
@@ -727,7 +772,7 @@ def main(_):
           FLAGS.songlength = new_songlength
           with tf.variable_scope("model", reuse=True) as scope:
             scope.set_regularizer(tf.contrib.layers.l2_regularizer(scale=FLAGS.reg_scale))
-            m = RNNGAN(is_training=True, num_song_features=num_song_features, num_meta_features=num_meta_features)
+            m = RNNGAN(is_training=True, num_song_features=num_song_features, num_meta_features=num_meta_features, reuse_rnn_cells=True)
 
         if not FLAGS.adam:
           m.assign_lr(session, FLAGS.learning_rate * lr_decay)

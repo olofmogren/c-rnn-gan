@@ -91,7 +91,6 @@ sources['classical']['czerny']       = ['http://www.classicalmidi.co.uk/czerny.h
 sources['classical']['debussy']      = ['http://www.classicalmidi.co.uk/debussy.htm']
 sources['classical']['delibes']      = ['http://www.classicalmidi.co.uk/del.htm']
 sources['classical']['delius']       = ['http://www.classicalmidi.co.uk/delius.htm']
-sources['classical']['dialoc']       = ['http://www.classicalmidi.co.uk/diaoc.htm']
 sources['classical']['dupre']        = ['http://www.classicalmidi.co.uk/dupre.htm']
 sources['classical']['dussek']       = ['http://www.classicalmidi.co.uk/dussek.htm']
 sources['classical']['dvorak']       = ['http://www.classicalmidi.co.uk/dvok.htm']
@@ -102,7 +101,6 @@ sources['classical']['field']        = ['http://www.classicalmidi.co.uk/field.ht
 sources['classical']['flotow']       = ['http://www.classicalmidi.co.uk/flotow.htm']
 sources['classical']['foster']       = ['http://www.classicalmidi.co.uk/foster.htm']
 sources['classical']['franck']       = ['http://www.classicalmidi.co.uk/franck.htm']
-sources['classical']['fresc']        = ['http://www.classicalmidi.co.uk/fresc.htm']
 sources['classical']['garoto']       = ['http://www.classicalmidi.co.uk/garoto.htm']
 sources['classical']['german']       = ['http://www.classicalmidi.co.uk/german.htm']
 sources['classical']['gershwin']     = ['http://www.classicalmidi.co.uk/gershwin.htm']
@@ -128,7 +126,6 @@ sources['classical']['jstrauss']     = ['http://www.classicalmidi.co.uk/jstrauss
 sources['classical']['karg']         = ['http://www.classicalmidi.co.uk/karl.htm']
 sources['classical']['khach']        = ['http://www.classicalmidi.co.uk/khach.htm']
 sources['classical']['kuhlau']       = ['http://www.classicalmidi.co.uk/kuhlau.htm']
-sources['classical']['lalo']         = ['http://www.classicalmidi.co.uk/lalo.htm']
 sources['classical']['lemire']       = ['http://www.classicalmidi.co.uk/lemire.htm']
 sources['classical']['lenar']        = ['http://www.classicalmidi.co.uk/lenar.htm']
 sources['classical']['liszt']        = ['http://www.midiworld.com/liszt.htm','http://www.classicalmidi.co.uk/liszt.htm']
@@ -982,8 +979,8 @@ class MusicDataLoader(object):
           if works_per_composer is not None and i >= works_per_composer:
             break
           
-          if i % 100 == 99 or i+1 == len(files) or i+1 == works_per_composer:
-            print 'Reading files {}/{}: {}'.format(genre, composer, (i+1))
+          #if i % 100 == 99 or i+1 == len(files) or i+1 == works_per_composer:
+          #  print 'Reading files {}/{}: {}'.format(genre, composer, (i+1))
           if os.path.isfile(os.path.join(current_path,f)):
             song_data = self.read_one_file(current_path, f, pace_events)
             if song_data is None:
@@ -995,6 +992,7 @@ class MusicDataLoader(object):
             else:
               self.songs['train'].append([genre, composer, song_data])
           #b0reak
+    print('Read {} files.'.format(len(self.songs['train'])))
     random.shuffle(self.songs['train'])
     self.pointer['validation'] = 0
     self.pointer['test'] = 0
