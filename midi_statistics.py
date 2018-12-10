@@ -113,16 +113,16 @@ def detect_beat(midi_pattern):
       elif type(event) == midi.events.NoteOnEvent:
         abs_ticks.append(abs_tick)
   stats = {}
-  for quarter_note_estimate in xrange(int(ticks_per_quarter_note), int(0.75*ticks_per_quarter_note), -1):
+  for quarter_note_estimate in range(int(ticks_per_quarter_note), int(0.75*ticks_per_quarter_note), -1):
     #print('est: {}'.format(quarter_note_estimate))
     avg_ticks_off = []
-    for begin_tick in xrange(quarter_note_estimate):
+    for begin_tick in range(quarter_note_estimate):
       ticks_off = []
       for abs_tick in abs_ticks:
         #print('abs_tick: {} % {}'.format(abs_tick, quarter_note_estimate/4))
-        sixteenth_note_estimate = quarter_note_estimate/4
+        sixteenth_note_estimate = quarter_note_estimate//4
         ticks_off_sixteenths = int((begin_tick+abs_tick)%sixteenth_note_estimate)
-        if ticks_off_sixteenths > sixteenth_note_estimate/2:
+        if ticks_off_sixteenths > sixteenth_note_estimate//2:
           # off, but before beat 
           ticks_off_sixteenths = -(ticks_off_sixteenths-sixteenth_note_estimate)
         #print('ticks_off: {}'.format(ticks_off_sixteenths))
@@ -317,11 +317,11 @@ def repetitions(tones):
   rs = {}
   #print(tones)
   #print(len(tones)/2)
-  for l in xrange(2, min(len(tones)/2, 10)):
+  for l in range(2, min(len(tones)//2, 10)):
     #print (l)
     rs[l] = 0
-    for i in xrange(len(tones)-l*2):
-      for j in xrange(i+l,len(tones)-l):
+    for i in range(len(tones)-l*2):
+      for j in range(i+l,len(tones)-l):
         #print('comparing \'{}\' and \'{}\''.format(tones[i:i+l], tones[j:j+l]))
         if tones[i:i+l] == tones[j:j+l]:
           rs[l] += 1
@@ -352,7 +352,7 @@ def tone_to_tone_name(tone):
   """
 
   base_tone = tone_names[tone%12]
-  octave = tone/12-5
+  octave = tone//12-5
   return '{} {}'.format(base_tone, octave)
 
 def max_likelihood_scale(tones):
@@ -413,7 +413,7 @@ def get_all_stats(midi_pattern):
   stats['freq_span'] = tone_to_freq(max(tones))-tone_to_freq(min(tones))
   stats['tones_unique'] = len(set(tones))
   rs = repetitions(tones)
-  for r in xrange(2,10):
+  for r in range(2,10):
     if r in rs:
       stats['repetitions_{}'.format(r)] = rs[r]
     else:

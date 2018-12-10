@@ -16,9 +16,14 @@
 # limitations under the License.
 # ==============================================================================
 
-
-import urlparse, urllib2, os, midi, math, random, re, string, sys
+try:
+  from urllib.parse import urlparse
+except ImportError:
+  from urlparse import urlparse
+from urllib.request import urlopen
+import os, midi, math, random, re, string, sys
 import numpy as np
+from io import BytesIO
 
 GENRE      = 0
 COMPOSER   = 1
@@ -91,6 +96,7 @@ sources['classical']['czerny']       = ['http://www.classicalmidi.co.uk/czerny.h
 sources['classical']['debussy']      = ['http://www.classicalmidi.co.uk/debussy.htm']
 sources['classical']['delibes']      = ['http://www.classicalmidi.co.uk/del.htm']
 sources['classical']['delius']       = ['http://www.classicalmidi.co.uk/delius.htm']
+sources['classical']['dialoc']       = ['http://www.classicalmidi.co.uk/diaoc.htm']
 sources['classical']['dupre']        = ['http://www.classicalmidi.co.uk/dupre.htm']
 sources['classical']['dussek']       = ['http://www.classicalmidi.co.uk/dussek.htm']
 sources['classical']['dvorak']       = ['http://www.classicalmidi.co.uk/dvok.htm']
@@ -101,6 +107,7 @@ sources['classical']['field']        = ['http://www.classicalmidi.co.uk/field.ht
 sources['classical']['flotow']       = ['http://www.classicalmidi.co.uk/flotow.htm']
 sources['classical']['foster']       = ['http://www.classicalmidi.co.uk/foster.htm']
 sources['classical']['franck']       = ['http://www.classicalmidi.co.uk/franck.htm']
+sources['classical']['fresc']        = ['http://www.classicalmidi.co.uk/fresc.htm']
 sources['classical']['garoto']       = ['http://www.classicalmidi.co.uk/garoto.htm']
 sources['classical']['german']       = ['http://www.classicalmidi.co.uk/german.htm']
 sources['classical']['gershwin']     = ['http://www.classicalmidi.co.uk/gershwin.htm']
@@ -126,6 +133,7 @@ sources['classical']['jstrauss']     = ['http://www.classicalmidi.co.uk/jstrauss
 sources['classical']['karg']         = ['http://www.classicalmidi.co.uk/karl.htm']
 sources['classical']['khach']        = ['http://www.classicalmidi.co.uk/khach.htm']
 sources['classical']['kuhlau']       = ['http://www.classicalmidi.co.uk/kuhlau.htm']
+sources['classical']['lalo']         = ['http://www.classicalmidi.co.uk/lalo.htm']
 sources['classical']['lemire']       = ['http://www.classicalmidi.co.uk/lemire.htm']
 sources['classical']['lenar']        = ['http://www.classicalmidi.co.uk/lenar.htm']
 sources['classical']['liszt']        = ['http://www.midiworld.com/liszt.htm','http://www.classicalmidi.co.uk/liszt.htm']
@@ -684,7 +692,7 @@ class MusicDataLoader(object):
     if synthetic == 'chords':
       self.generate_chords(pace_events=pace_events)
     elif not datadir is None:
-      print('Data loader: datadir: {}'.format(datadir))
+      print ('Data loader: datadir: {}'.format(datadir))
       self.download_midi_data()
       self.read_data(select_validation_percentage, select_test_percentage, works_per_composer, pace_events)
 
@@ -696,67 +704,78 @@ class MusicDataLoader(object):
     Hence, similar to the structure of the sources dict.
     """
     midi_files = {}
+    print("midi data")
 
     if os.path.exists(os.path.join(self.datadir, 'do-not-redownload.txt')):
-      print 'Already completely downloaded, delete do-not-redownload.txt to check for files to download.'
+      print ( 'Already completely downloaded, delete do-not-redownload.txt to check for files to download.')
       return
     for genre in sources:
       midi_files[genre] = {}
       for composer in sources[genre]:
         midi_files[genre][composer] = []
         for url in sources[genre][composer]:
-          print url
-          response = urllib2.urlopen(url)
+          print ("url", url)
+          try:
+              response = urlopen(url)
+              data = response.read().decode('latin-1')
+          except Exception as r:
+              print('error',r)
+              continue
           #if 'classicalmidi' in url:
           #  headers = response.info()
-          #  print headers
-          data = response.read()
+          #  print ( headers
 
           #htmlinks = re.findall('"(  ?[^"]+\.htm)"', data)
           #for link in htmlinks:
-          #  print 'http://www.classicalmidi.co.uk/'+strip(link)
+          #  print ( 'http://www.classicalmidi.co.uk/'+strip(link)
           
           # make urls absolute:
-          urlparsed = urlparse.urlparse(url)
+          urlparsed = urlparse(url)
+          
           data = re.sub('href="\/', 'href="http://'+urlparsed.hostname+'/', data, flags= re.IGNORECASE)
           data = re.sub('href="(?!http:)', 'href="http://'+urlparsed.hostname+urlparsed.path[:urlparsed.path.rfind('/')]+'/', data, flags= re.IGNORECASE)
           #if 'classicalmidi' in url:
-          #  print data
+          #  print ( data
           
           links = re.findall('"(http://[^"]+\.mid)"', data)
           for link in links:
             cont = False
             for p in ignore_patterns:
               if p in link:
-                print 'Not downloading links with {}'.format(p)
+                print ( 'Not downloading links with {}'.format(p))
                 cont = True
                 continue
             if cont: continue
-            print link
+            print ( link)
             filename = link.split('/')[-1]
             valid_chars = "-_.()%s%s" % (string.ascii_letters, string.digits)
             filename = ''.join(c for c in filename if c in valid_chars)
-            print genre+'/'+composer+'/'+filename
+            print ( genre+'/'+composer+'/'+filename)
             midi_files[genre][composer].append(filename)
             localdir = os.path.join(os.path.join(self.datadir, genre), composer)
             localpath = os.path.join(localdir, filename)
             if os.path.exists(localpath):
-              print 'File exists. Not redownloading: {}'.format(localpath)
+              print ( 'File exists. Not redownloading: {}'.format(localpath))
             else:
               try:
-                response_midi = urllib2.urlopen(link)
+                response_midi = urlopen(link)
                 try: os.makedirs(localdir)
                 except: pass
                 data_midi = response_midi.read()
-                if 'DOCTYPE html PUBLIC' in data_midi:
-                  print 'Seems to have been served an html page instead of a midi file. Continuing with next file.'
-                elif 'RIFF' in data_midi[0:9]:
-                  print 'Seems to have been served an RIFF file instead of a midi file. Continuing with next file.'
-                else:
-                  with open(localpath, 'w') as f:
+                #print(type(data_midi))
+                
+                #if 'DOCTYPE html PUBLIC' in data_midi:
+                #  print ( 'Seems to have been served an html page instead of a midi file. Continuing with next file.')
+                #elif 'RIFF' in data_midi[0:9]:
+                #  print ( 'Seems to have been served an RIFF file instead of a midi file. Continuing with next file.')
+                #else:
+                with open(localpath, 'wb') as f:
                     f.write(data_midi)
-              except:
-                print 'Failed to fetch {}'.format(link)
+              except Exception as e:
+                print("error 2\n",e)
+                #response_midi = urlopen(link)
+                #print(response_midi.read())
+                print ( 'Failed to fetch {}'.format(link))
     with open(os.path.join(self.datadir, 'do-not-redownload.txt'), 'w') as f:
       f.write('This directory is considered completely downloaded.')
 
@@ -772,9 +791,9 @@ class MusicDataLoader(object):
     """
 
     self.genres = ['classical']
-    print('num genres:{}'.format(len(self.genres)))
+    print (('num genres:{}'.format(len(self.genres))))
     self.composers = ['generated_chords']
-    print('num composers: {}'.format(len(self.composers)))
+    print (('num composers: {}'.format(len(self.composers))))
 
     self.songs = {}
     self.songs['validation'] = []
@@ -798,21 +817,21 @@ class MusicDataLoader(object):
     composer = self.composers[0]
     
     #write_files = False
-    #print('write_files = False')
+    #print (('write_files = False')
     #if self.datadir is not None:
     #  write_files = True
-    #  print('write_files = True')
+    #  print (('write_files = True')
     #  dirnameforallfiles = os.path.join(self.datadir, os.path.join(genre, composer))
     #  if not os.path.exists(dirnameforallfiles):
     #    os.makedirs(dirnameforallfiles)
     #  else:
-    #    print('write_files = False')
+    #    print (('write_files = False')
     #    write_files = False
 
-    for i in xrange(numsongs):
+    for i in range(numsongs):
       # OVERFIT
       if i % 100 == 99:
-        print 'Generating songs {}/{}: {}'.format(genre, composer, (i+1))
+        print ( 'Generating songs {}/{}: {}'.format(genre, composer, (i+1)))
       
       song_data = []
       key = random.randint(0,100)
@@ -821,7 +840,7 @@ class MusicDataLoader(object):
       # Tempo:
       ticks_per_quarter_note = 384
       
-      for j in xrange(songlength):
+      for j in range(songlength):
         last_event_input_tick=0
         not_closed_notes = []
         begin_tick = float(j*ticks_per_quarter_note)
@@ -851,7 +870,7 @@ class MusicDataLoader(object):
         note3[FREQ] = tone_to_freq(fifth)
         song_data.append(note3)
       song_data.sort(key=lambda e: e[BEGIN_TICK])
-      #print(song_data)
+      #print ((song_data)
       #sys.exit()
       if (pace_events):
         pace_event_list = []
@@ -864,10 +883,10 @@ class MusicDataLoader(object):
       if self.datadir is not None and i==0:
         filename = os.path.join(self.datadir, '{}.mid'.format(i))
         if not os.path.exists(filename):
-          print('saving: {}.'.format(filename))
+          print (('saving: {}.'.format(filename)))
           self.save_data(filename, song_data)
         else:
-          print('file exists. Not overwriting: {}.'.format(filename))
+          print (('file exists. Not overwriting: {}.'.format(filename)))
       
       if i%100 == 0:
         self.songs['validation'].append([genre, composer, song_data])
@@ -879,7 +898,7 @@ class MusicDataLoader(object):
     self.pointer['validation'] = 0
     self.pointer['test'] = 0
     self.pointer['train'] = 0
-    print('lens: train: {}, val: {}, test: {}'.format(len(self.songs['train']), len(self.songs['validation']), len(self.songs['test'])))
+    print (('lens: train: {}, val: {}, test: {}'.format(len(self.songs['train']), len(self.songs['validation']), len(self.songs['test']))))
     return self.songs
 
 
@@ -898,7 +917,7 @@ class MusicDataLoader(object):
     """
 
     self.genres = sorted(sources.keys())
-    print('num genres:{}'.format(len(self.genres)))
+    print (('num genres:{}'.format(len(self.genres))))
     if self.single_composer is not None:
       self.composers = [self.single_composer]
     else:
@@ -909,8 +928,8 @@ class MusicDataLoader(object):
         self.composers = self.composers[0:1]
       self.composers = list(set(self.composers))
       self.composers.sort()
-    print('num composers: {}'.format(len(self.composers)))
-    print('limit works per composer: {}'.format(works_per_composer))
+    print (('num composers: {}'.format(len(self.composers))))
+    print (('limit works per composer: {}'.format(works_per_composer)))
 
     self.songs = {}
     self.songs['validation'] = []
@@ -925,32 +944,32 @@ class MusicDataLoader(object):
         for composer in self.composers:
           current_path = os.path.join(self.datadir,os.path.join(genre, composer))
           if not os.path.exists(current_path):
-            print 'Path does not exist: {}'.format(current_path)
+            print ( 'Path does not exist: {}'.format(current_path))
             continue
           files = os.listdir(current_path)
           works_read = 0
           for i,f in enumerate(files):
             if os.path.isfile(os.path.join(current_path,f)):
-              print('appending {}'.format(os.path.join(os.path.join(genre, composer), f)))
+              print (('appending {}'.format(os.path.join(os.path.join(genre, composer), f))))
               filelist.append(os.path.join(os.path.join(genre, composer), f))
               works_read += 1
               if works_per_composer is not None and works_read >= works_per_composer:
                 break
-      print('filelist len: {}'.format(len(filelist)))
+      print (('filelist len: {}'.format(len(filelist))))
       random.shuffle(filelist)
-      print('filelist len: {}'.format(len(filelist)))
+      print (('filelist len: {}'.format(len(filelist))))
       
       validation_len = 0
       if select_test_percentage:
         validation_len = int(float(select_validation_percentage/100.0)*len(filelist))
-        print('validation len: {}'.format(validation_len))
+        print (('validation len: {}'.format(validation_len)))
         file_list['validation'] = filelist[0:validation_len]
-        print ('Selected validation set (FLAG --select_validation_percentage): {}'.format(file_list['validation']))
+        print ( ('Selected validation set (FLAG --select_validation_percentage): {}'.format(file_list['validation'])))
       if select_test_percentage:
         test_len = int(float(select_test_percentage/100.0)*len(filelist))
-        print('test len: {}'.format(test_len))
+        print (('test len: {}'.format(test_len)))
         file_list['test'] = filelist[validation_len:validation_len+test_len]
-        print ('Selected test set (FLAG --select_test_percentage): {}'.format(file_list['test']))
+        print ( ('Selected test set (FLAG --select_test_percentage): {}'.format(file_list['test'])))
     
     # OVERFIT
     count = 0
@@ -964,12 +983,12 @@ class MusicDataLoader(object):
         if debug == 'overfit' and count > 20: break
         current_path = os.path.join(self.datadir,os.path.join(genre, composer))
         if not os.path.exists(current_path):
-          print 'Path does not exist: {}'.format(current_path)
+          print ( 'Path does not exist: {}'.format(current_path))
           continue
         files = os.listdir(current_path)
         #composer_id += 1
         #if composer_id > max_composers:
-        #  print('Only using {} composers.'.format(max_composers))
+        #  print (('Only using {} composers.'.format(max_composers))
         #  break
         for i,f in enumerate(files):
           # OVERFIT
@@ -979,8 +998,8 @@ class MusicDataLoader(object):
           if works_per_composer is not None and i >= works_per_composer:
             break
           
-          #if i % 100 == 99 or i+1 == len(files) or i+1 == works_per_composer:
-          #  print 'Reading files {}/{}: {}'.format(genre, composer, (i+1))
+          if i % 100 == 99 or i+1 == len(files) or i+1 == works_per_composer:
+            print ( 'Reading files {}/{}: {}'.format(genre, composer, (i+1)))
           if os.path.isfile(os.path.join(current_path,f)):
             song_data = self.read_one_file(current_path, f, pace_events)
             if song_data is None:
@@ -992,7 +1011,6 @@ class MusicDataLoader(object):
             else:
               self.songs['train'].append([genre, composer, song_data])
           #b0reak
-    print('Read {} files.'.format(len(self.songs['train'])))
     random.shuffle(self.songs['train'])
     self.pointer['validation'] = 0
     self.pointer['test'] = 0
@@ -1000,21 +1018,21 @@ class MusicDataLoader(object):
     # DEBUG: OVERFIT. overfit.
     if debug == 'overfit':
       self.songs['train'] = self.songs['train'][0:1]
-      #print('DEBUG: trying to overfit on the following (repeating for train/validation/test):')
+      #print (('DEBUG: trying to overfit on the following (repeating for train/validation/test):')
       for i in range(200):
         self.songs['train'].append(self.songs['train'][0])
       self.songs['validation'] = self.songs['train'][0:1]
       self.songs['test'] = self.songs['train'][0:1]
-    #print('lens: train: {}, val: {}, test: {}'.format(len(self.songs['train']), len(self.songs['validation']), len(self.songs['test'])))
+    #print (('lens: train: {}, val: {}, test: {}'.format(len(self.songs['train']), len(self.songs['validation']), len(self.songs['test'])))
     return self.songs
 
   def read_one_file(self, path, filename, pace_events):
     try:
       if debug:
-        print('Reading {}'.format(os.path.join(path,filename)))
+        print (('Reading {}'.format(os.path.join(path,filename))))
       midi_pattern = midi.read_midifile(os.path.join(path,filename))
     except:
-      print 'Error reading {}'.format(os.path.join(path,filename))
+      print ( 'Error reading {}'.format(os.path.join(path,filename)))
       return None
     #
     # Interpreting the midi pattern.
@@ -1071,7 +1089,7 @@ class MusicDataLoader(object):
     
     # Tempo:
     ticks_per_quarter_note = float(midi_pattern.resolution)
-    #print('Resoluton: {}'.format(ticks_per_quarter_note))
+    #print (('Resoluton: {}'.format(ticks_per_quarter_note))
     input_ticks_per_output_tick = ticks_per_quarter_note/self.output_ticks_per_quarter_note
     #if debug == 'overfit': input_ticks_per_output_tick = 1.0
     
@@ -1095,9 +1113,9 @@ class MusicDataLoader(object):
             else:
               retained_not_closed_notes.append(e)
           #if len(not_closed_notes) == len(retained_not_closed_notes):
-          #  print('Warning. NoteOffEvent, but len(not_closed_notes)({}) == len(retained_not_closed_notes)({})'.format(len(not_closed_notes), len(retained_not_closed_notes)))
-          #  print('NoteOff: {}'.format(tone_to_freq(event.data[0])))
-          #  print('not closed: {}'.format(not_closed_notes))
+          #  print (('Warning. NoteOffEvent, but len(not_closed_notes)({}) == len(retained_not_closed_notes)({})'.format(len(not_closed_notes), len(retained_not_closed_notes)))
+          #  print (('NoteOff: {}'.format(tone_to_freq(event.data[0])))
+          #  print (('not closed: {}'.format(not_closed_notes))
           not_closed_notes = retained_not_closed_notes
         elif type(event) == midi.events.NoteOnEvent:
           begin_tick = float(event.tick+last_event_input_tick)/input_ticks_per_output_tick
@@ -1109,7 +1127,7 @@ class MusicDataLoader(object):
           #not_closed_notes.append([0.0, tone_to_freq(event.data[0]), velocity, begin_tick, event.channel])
         last_event_input_tick += event.tick
       for e in not_closed_notes:
-        #print('Warning: found no NoteOffEvent for this note. Will close it. {}'.format(e))
+        #print (('Warning: found no NoteOffEvent for this note. Will close it. {}'.format(e))
         e[LENGTH] = float(ticks_per_quarter_note)/input_ticks_per_output_tick
         song_data.append(e)
     song_data.sort(key=lambda e: e[BEGIN_TICK])
@@ -1158,7 +1176,7 @@ class MusicDataLoader(object):
       A tone  has a feature telling us the pause before it.
 
     """
-    #print('get_batch(): pointer: {}, len: {}, batchsize: {}'.format(self.pointer[part], len(self.songs[part]), batchsize))
+    #print (('get_batch(): pointer: {}, len: {}, batchsize: {}'.format(self.pointer[part], len(self.songs[part]), batchsize))
     if self.pointer[part] > len(self.songs[part])-batchsize:
       return [None, None]
     if self.songs[part]:
@@ -1170,7 +1188,7 @@ class MusicDataLoader(object):
       num_song_features = NUM_FEATURES_PER_TONE*self.tones_per_cell+1
       batch_genrecomposer = np.ndarray(shape=[batchsize, num_meta_features])
       batch_songs = np.ndarray(shape=[batchsize, songlength, num_song_features])
-      #print 'batch shape: {}'.format(batch_songs.shape)
+      #print ( 'batch shape: {}'.format(batch_songs.shape)
       zeroframe = np.zeros(shape=[num_song_features])
       for s in range(len(batch)):
         songmatrix = np.ndarray(shape=[songlength, num_song_features])
@@ -1202,7 +1220,7 @@ class MusicDataLoader(object):
             # relative time zero in the midi spec.
             event[TICKS_FROM_PREV_START] = ticks_from_start_of_prev_tone
             tone_count = 1
-            for simultaneous in xrange(1,self.tones_per_cell):
+            for simultaneous in range(1,self.tones_per_cell):
               if n+simultaneous >= len(batch[s][SONG_DATA]):
                 break
               if batch[s][SONG_DATA][n+simultaneous][BEGIN_TICK]-batch[s][SONG_DATA][n][BEGIN_TICK] == 0:
@@ -1217,12 +1235,12 @@ class MusicDataLoader(object):
           matrixrow += 1
           n += tone_count
         #if s == 0 and self.pointer[part] == batchsize:
-        #  print songmatrix[0:10,:]
+        #  print ( songmatrix[0:10,:]
         batch_genrecomposer[s,:] = genrecomposer
         batch_songs[s,:,:] = songmatrix
       #batched_sequence = np.split(batch_songs, indices_or_sections=songlength, axis=1)
       #return [np.squeeze(s, axis=1) for s in batched_sequence]
-      #print('batch returns [0:10]: {}'.format(batch_songs[0,0:10,:]))
+      #print (('batch returns [0:10]: {}'.format(batch_songs[0,0:10,:]))
       return [batch_genrecomposer, batch_songs]
     else:
       raise 'get_batch() called but self.songs is not initialized.'
@@ -1244,7 +1262,7 @@ class MusicDataLoader(object):
 
     Can be used with filename == None. Then nothing is saved, but only returned.
     """
-    print('song_data[0:10]: {}'.format(song_data[0:10]))
+    #print (('song_data[0:10]: {}'.format(song_data[0:10])))
 
 
     #
@@ -1301,21 +1319,21 @@ class MusicDataLoader(object):
     abs_tick_note_beginning = 0.0
     for frame in song_data:
       abs_tick_note_beginning += frame[TICKS_FROM_PREV_START]
-      for subframe in xrange(self.tones_per_cell):
+      for subframe in range(self.tones_per_cell):
         offset = subframe*NUM_FEATURES_PER_TONE
         tick_len           = int(round(frame[offset+LENGTH]))
         freq               = frame[offset+FREQ]
         velocity           = min(int(round(frame[offset+VELOCITY])),127)
-        #print('tick_len: {}, freq: {}, velocity: {}, ticks_from_prev_start: {}'.format(tick_len, freq, velocity, frame[TICKS_FROM_PREV_START]))
+        #print (('tick_len: {}, freq: {}, velocity: {}, ticks_from_prev_start: {}'.format(tick_len, freq, velocity, frame[TICKS_FROM_PREV_START]))
         d = freq_to_tone(freq)
-        #print('d: {}'.format(d))
+        #print (('d: {}'.format(d))
         if d is not None and velocity > 0 and tick_len > 0:
           # range-check with preserved tone, changed one octave:
           tone = d['tone']
           while tone < 0:   tone += 12
           while tone > 127: tone -= 12
           pitch_wheel = cents_to_pitchwheel_units(d['cents'])
-          #print('tick_len: {}, freq: {}, tone: {}, pitch_wheel: {}, velocity: {}'.format(tick_len, freq, tone, pitch_wheel, velocity))
+          #print (('tick_len: {}, freq: {}, tone: {}, pitch_wheel: {}, velocity: {}'.format(tick_len, freq, tone, pitch_wheel, velocity))
           #if pitch_wheel != 0:
           #midi.events.PitchWheelEvent(tick=int(ticks_to_this_tone),
           #                                            pitch=pitch_wheel)
@@ -1339,8 +1357,8 @@ class MusicDataLoader(object):
     
     cur_track.append(midi.EndOfTrackEvent(tick=int(self.output_ticks_per_quarter_note)))
     midi_pattern.append(cur_track)
-    #print 'Printing midi track.'
-    #print midi_pattern
+    #print ( 'print (ing midi track.'
+    #print ( midi_pattern
     return midi_pattern
 
   def save_midi_pattern(self, filename, midi_pattern):
@@ -1403,9 +1421,9 @@ def onehot(i, length):
 
 def main():
   filename = sys.argv[1]
-  print('File: {}'.format(filename))
+  print (('File: {}'.format(filename)))
   dl = MusicDataLoader(datadir=None, select_validation_percentage=0.0, select_test_percentage=0.0)
-  print('length, frequency, velocity, time from previous start.')
+  print (('length, frequency, velocity, time from previous start.'))
   abs_song_data = dl.read_one_file(os.path.dirname(filename), os.path.basename(filename), pace_events=True)
   
   rel_song_data = []
@@ -1416,13 +1434,13 @@ def main():
       e[3] = e[3]-last_start
     rel_song_data.append(e)
     last_start = this_start
-    print(e)
+    print ((e))
   if len(sys.argv) > 2:
     if not os.path.exists(sys.argv[2]):
-      print('Saving: {}.'.format(sys.argv[2]))
+      print (('Saving: {}.'.format(sys.argv[2])))
       dl.save_data(sys.argv[2], rel_song_data)
     else:
-      print('File already exists: {}. Not saving.'.format(sys.argv[2]))
+      print (('File already exists: {}. Not saving.'.format(sys.argv[2])))
 if __name__ == "__main__":
   main()
 

@@ -19,5 +19,13 @@ A generative adversarial model that works on continuous sequential data.
 Implementation uses Python and Tensorflow, and depends on
 https://github.com/vishnubob/python-midi for MIDI file IO.
 
-Author: Olof Mogren
+## Requirements
 
+tensorflow, python-midi (or python3-midi)
+
+## How to run?
+
+python rnn_gan.py --datadir "relative-path-to-data" --traindir "path-to-generated-output" --feed_previous --feature_matching --bidirectional_d --learning_rate 0.1 --pretraining_epochs 6
+
+Author: Olof Mogren (olofmogren)
+Contributors: Dhruv Sharma (dhruvsharma1992)
